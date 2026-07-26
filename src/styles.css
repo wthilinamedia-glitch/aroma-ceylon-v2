@@ -1,0 +1,220 @@
+:root {
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1a1511;
+  background: #f4efe5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  --ink: #17120e;
+  --ink-soft: #473c32;
+  --cream: #f7f2e8;
+  --paper: #fffdf8;
+  --gold: #b98218;
+  --gold-light: #d9b45c;
+  --gold-pale: #f3e4b8;
+  --line: #ded3c3;
+  --danger: #a83434;
+  --shadow: 0 22px 60px rgba(36, 27, 18, 0.13);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input { font: inherit; }
+
+.auth-page, .loading-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 25% 16%, rgba(203, 151, 39, 0.22), transparent 29%),
+    radial-gradient(circle at 78% 75%, rgba(207, 173, 93, 0.16), transparent 33%),
+    linear-gradient(145deg, #15110e 0%, #2a2119 48%, #0f0c0a 100%);
+}
+
+.auth-card, .fatal-card {
+  width: min(440px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(217, 180, 92, 0.38);
+  border-radius: 28px;
+  background: rgba(255, 253, 248, 0.96);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-height: 178px;
+  object-fit: cover;
+  object-position: center 44%;
+  border-radius: 19px;
+}
+
+.brand-divider {
+  width: 74px;
+  height: 2px;
+  margin: 22px 0;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
+.eyebrow {
+  margin: 0 0 7px;
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.17em;
+}
+
+h1, h2, h3, p { margin-top: 0; }
+h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; }
+.auth-card h1 { margin-bottom: 8px; font-size: clamp(2rem, 8vw, 3rem); }
+.muted { color: #6d6259; line-height: 1.55; }
+
+.login-form { display: grid; gap: 15px; margin-top: 25px; }
+label { color: var(--ink-soft); font-size: 0.82rem; font-weight: 800; }
+input {
+  width: 100%;
+  margin-top: 7px;
+  padding: 14px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  outline: none;
+}
+input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 4px rgba(185, 130, 24, 0.13);
+}
+
+.primary-button, .outline-button, .text-button {
+  border: 0;
+  border-radius: 13px;
+  padding: 13px 16px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.primary-button {
+  color: #fffaf0;
+  background: linear-gradient(145deg, #9c6710, #c4932d);
+  box-shadow: 0 10px 24px rgba(156, 103, 16, 0.24);
+}
+.primary-button:disabled { opacity: 0.66; cursor: wait; }
+.error-message { margin: 0; color: var(--danger); font-size: 0.82rem; }
+
+.loading-page > img {
+  width: 86px;
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+.loading-page > p { margin: 16px 0 0; color: #ead8a8; }
+
+.app-shell {
+  min-height: 100vh;
+  padding-bottom: calc(30px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at top right, rgba(213, 172, 80, 0.17), transparent 29%),
+    var(--cream);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(12px + env(safe-area-inset-top)) 18px 12px;
+  color: #fff;
+  background: rgba(21, 17, 13, 0.95);
+  border-bottom: 1px solid rgba(217, 180, 92, 0.25);
+  backdrop-filter: blur(15px);
+}
+.topbar-brand { display: flex; align-items: center; gap: 11px; }
+.topbar-brand img { width: 44px; height: 44px; border-radius: 13px; }
+.topbar-brand strong, .topbar-brand span { display: block; }
+.topbar-brand strong { font-family: Georgia, serif; letter-spacing: 0.04em; }
+.topbar-brand span { margin-top: 2px; color: #d7c8a9; font-size: 0.69rem; }
+
+.outline-button {
+  padding: 9px 12px;
+  color: #eedcae;
+  background: transparent;
+  border: 1px solid rgba(238, 220, 174, 0.34);
+}
+
+.dashboard { width: min(980px, 100%); margin: 0 auto; padding: 20px; }
+
+.welcome-panel {
+  padding: 25px;
+  color: #fffaf0;
+  border-radius: 24px;
+  background:
+    linear-gradient(115deg, rgba(21,17,13,.96), rgba(60,43,26,.92)),
+    url('/aroma-logo.png') center/cover;
+  box-shadow: var(--shadow);
+}
+.welcome-panel h1 { margin-bottom: 8px; font-size: clamp(1.9rem, 6vw, 3.4rem); }
+.welcome-panel p:last-child { margin-bottom: 0; max-width: 700px; color: #dcd0bd; line-height: 1.58; }
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 11px;
+  margin: 16px 0 29px;
+}
+.status-grid article {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--paper);
+}
+.status-grid span, .status-grid strong { display: block; }
+.status-grid span { color: #7b6e61; font-size: 0.72rem; }
+.status-grid strong { margin-top: 6px; }
+
+.section-title h2 { margin-bottom: 13px; font-size: 1.75rem; }
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+.module-card {
+  padding: 19px;
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: rgba(255, 253, 248, 0.95);
+  box-shadow: 0 10px 25px rgba(55, 42, 28, 0.06);
+}
+.module-heading { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.module-card h3 { margin-bottom: 8px; font-size: 1.18rem; }
+.module-card p { min-height: 43px; margin-bottom: 15px; color: #74685c; font-size: 0.86rem; line-height: 1.5; }
+.badge {
+  padding: 5px 8px;
+  color: #6e4b0e;
+  background: var(--gold-pale);
+  border-radius: 999px;
+  font-size: 0.63rem;
+  font-weight: 900;
+}
+.text-button {
+  padding: 0;
+  color: var(--gold);
+  background: transparent;
+}
+.text-button:disabled { opacity: 0.8; cursor: default; }
+
+.fatal-card h1 { font-size: 2rem; }
+.fatal-card p { color: var(--danger); line-height: 1.5; }
+.fatal-card .primary-button { width: 100%; }
+
+@media (max-width: 600px) {
+  .auth-card { padding: 21px; border-radius: 22px; }
+  .dashboard { padding: 15px; }
+  .module-grid { grid-template-columns: 1fr; }
+  .status-grid { gap: 7px; }
+  .status-grid article { padding: 12px 9px; }
+  .status-grid strong { font-size: 0.84rem; }
+}
