@@ -1,38 +1,30 @@
-# Aroma Ceylon Business App V2
+# Aroma Ceylon Business App V2 — Income & Expenses Update
 
-This starter includes:
+This package adds:
 
-- React + TypeScript + Vite
-- Supabase email/password authentication
-- Profile-based admin/user detection
-- Premium Aroma Ceylon branding using the supplied logo
-- PWA manifest, icons and service worker shell
-- Netlify build and SPA redirect configuration
-- No private keys or service-role keys
+- Admin income entry in EUR
+- Date-specific EUR → LKR rate lookup with manual override
+- Supabase-generated LKR income value
+- Expense submission for admin and regular users
+- Pending / approved / rejected workflow
+- Admin approval and rejection controls
+- Profit/loss dashboard using approved expenses only
+- Private bill-photo uploads
+- Client-side bill image compression before upload
+- Signed private bill viewing links
+- Mobile navigation and PWA-friendly UI
 
-## Local setup
+## Required database step
 
-1. Copy `.env.example` to `.env.local`.
-2. Get the Project URL and **publishable key** from Supabase's Connect panel.
-3. Fill:
+Run `02_expense_bill_storage.sql` once in Supabase SQL Editor before testing bill uploads.
 
-```env
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_PUBLISHABLE_KEY=...
-```
+## GitHub update
 
-4. Install and run:
+Replace the existing V2 repository files with the contents of this project folder and commit. Netlify will deploy automatically.
 
-```bash
-npm install
-npm run dev
-```
+Your existing Netlify environment variables remain unchanged:
 
-## Netlify
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Build command: `npm run build`
-Publish directory: `dist`
-
-Add the same two environment variables in Netlify project settings before deploying.
-
-Never place a Supabase secret key or service-role key in this frontend project.
+Never add a Supabase secret key or service-role key to this frontend repository.
