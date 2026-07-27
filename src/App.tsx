@@ -4,7 +4,7 @@ import { supabase } from './lib/supabase'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees'
 
 type Profile = {
   id: string
@@ -13,6 +13,9 @@ type Profile = {
   role: Role
   active: boolean
   job_title: string | null
+  phone: string | null
+  monthly_salary: number
+  salary_currency: string
 }
 
 type IncomeRecord = {
@@ -87,6 +90,18 @@ function formatEUR(value: number) {
     currency: 'EUR',
     minimumFractionDigits: 2,
   }).format(Number(value || 0))
+}
+
+function formatCurrency(value: number, currency: string) {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency || 'EUR',
+      minimumFractionDigits: 2,
+    }).format(Number(value || 0))
+  } catch {
+    return `${currency || 'EUR'} ${Number(value || 0).toFixed(2)}`
+  }
 }
 
 function formatDate(value: string) {
@@ -164,6 +179,81 @@ async function compressBillImage(file: File): Promise<CompressedImage> {
 
 function StatusBadge({ status }: { status: ExpenseStatus }) {
   return <span className={`status-badge ${status}`}>{status}</span>
+}
+
+
+function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  async function savePassword(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+
+    if (password.length < 8) {
+      setMessage('Use at least 8 characters for the password.')
+      return
+    }
+    if (password !== confirmPassword) {
+      setMessage('The passwords do not match.')
+      return
+    }
+
+    setBusy(true)
+    const { error } = await supabase.auth.updateUser({ password })
+    setBusy(false)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    window.history.replaceState({}, document.title, window.location.pathname)
+    onComplete()
+  }
+
+  return (
+    <main className="auth-page">
+      <section className="auth-card">
+        <img className="brand-logo" src="/aroma-logo.png" alt="Aroma Ceylon" />
+        <div className="brand-divider" />
+        <p className="eyebrow">EMPLOYEE INVITATION</p>
+        <h1>Create your password</h1>
+        <p className="muted">Set a secure password to finish activating your Aroma Ceylon account.</p>
+
+        <form onSubmit={savePassword} className="login-form">
+          <label>
+            New password
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Confirm password
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+            />
+          </label>
+          {message && <p className="error-message">{message}</p>}
+          <button className="primary-button" disabled={busy} type="submit">
+            {busy ? 'Saving…' : 'Activate account'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
 }
 
 function LoginScreen() {
@@ -1033,6 +1123,315 @@ function TransactionsPanel({
   )
 }
 
+
+function EmployeeManager({
+  currentProfile,
+  profiles,
+  onChanged,
+}: {
+  currentProfile: Profile
+  profiles: Profile[]
+  onChanged: () => Promise<void>
+}) {
+  const [invite, setInvite] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    job_title: '',
+    monthly_salary: '',
+    salary_currency: 'EUR',
+  })
+  const [editing, setEditing] = useState<Profile | null>(null)
+  const [editValues, setEditValues] = useState({
+    full_name: '',
+    phone: '',
+    job_title: '',
+    monthly_salary: '',
+    salary_currency: 'EUR',
+  })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const employees = useMemo(
+    () => [...profiles].sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || '')),
+    [profiles],
+  )
+
+  async function inviteEmployee(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    setError('')
+
+    const { data, error: functionError } = await supabase.functions.invoke('invite-employee', {
+      body: {
+        full_name: invite.full_name.trim(),
+        email: invite.email.trim().toLowerCase(),
+        phone: invite.phone.trim() || null,
+        job_title: invite.job_title.trim() || null,
+        monthly_salary: Number(invite.monthly_salary || 0),
+        salary_currency: invite.salary_currency,
+      },
+    })
+
+    if (functionError) {
+      setError(functionError.message)
+    } else if (data?.error) {
+      setError(data.error)
+    } else {
+      setMessage(`Invitation sent to ${invite.email.trim()}.`)
+      setInvite({
+        full_name: '',
+        email: '',
+        phone: '',
+        job_title: '',
+        monthly_salary: '',
+        salary_currency: 'EUR',
+      })
+      await onChanged()
+    }
+
+    setBusy(false)
+  }
+
+  function beginEdit(employee: Profile) {
+    setEditing(employee)
+    setMessage('')
+    setError('')
+    setEditValues({
+      full_name: employee.full_name || '',
+      phone: employee.phone || '',
+      job_title: employee.job_title || '',
+      monthly_salary: String(Number(employee.monthly_salary || 0)),
+      salary_currency: employee.salary_currency || 'EUR',
+    })
+  }
+
+  async function saveEmployee(event: FormEvent) {
+    event.preventDefault()
+    if (!editing) return
+    setBusy(true)
+    setMessage('')
+    setError('')
+
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({
+        full_name: editValues.full_name.trim(),
+        phone: editValues.phone.trim() || null,
+        job_title: editValues.job_title.trim() || null,
+        monthly_salary: Number(editValues.monthly_salary || 0),
+        salary_currency: editValues.salary_currency,
+      })
+      .eq('id', editing.id)
+
+    if (updateError) {
+      setError(updateError.message)
+    } else {
+      setMessage('Employee profile updated.')
+      setEditing(null)
+      await onChanged()
+    }
+    setBusy(false)
+  }
+
+  async function toggleActive(employee: Profile) {
+    if (employee.id === currentProfile.id) {
+      setError('Your own administrator account cannot be disabled here.')
+      return
+    }
+
+    const action = employee.active ? 'deactivate' : 'activate'
+    if (!window.confirm(`Are you sure you want to ${action} ${employee.full_name || employee.email || 'this employee'}?`)) return
+
+    setBusy(true)
+    setMessage('')
+    setError('')
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ active: !employee.active })
+      .eq('id', employee.id)
+
+    if (updateError) setError(updateError.message)
+    else {
+      setMessage(`Employee ${employee.active ? 'deactivated' : 'activated'}.`)
+      await onChanged()
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="stacked-sections">
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">ADMIN ONLY</p>
+            <h2>Invite an employee</h2>
+            <p className="section-copy">The employee receives a secure email invitation and joins as a regular user.</p>
+          </div>
+          <span className="gold-pill">User role</span>
+        </div>
+
+        <form className="employee-form" onSubmit={inviteEmployee}>
+          <label>
+            Full name
+            <input
+              value={invite.full_name}
+              onChange={(event) => setInvite((value) => ({ ...value, full_name: event.target.value }))}
+              required
+            />
+          </label>
+          <label>
+            Email
+            <input
+              type="email"
+              value={invite.email}
+              onChange={(event) => setInvite((value) => ({ ...value, email: event.target.value }))}
+              required
+            />
+          </label>
+          <label>
+            Phone
+            <input
+              type="tel"
+              value={invite.phone}
+              onChange={(event) => setInvite((value) => ({ ...value, phone: event.target.value }))}
+            />
+          </label>
+          <label>
+            Job title
+            <input
+              value={invite.job_title}
+              onChange={(event) => setInvite((value) => ({ ...value, job_title: event.target.value }))}
+              placeholder="Production assistant"
+            />
+          </label>
+          <label>
+            Monthly salary
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={invite.monthly_salary}
+              onChange={(event) => setInvite((value) => ({ ...value, monthly_salary: event.target.value }))}
+            />
+          </label>
+          <label>
+            Currency
+            <select
+              value={invite.salary_currency}
+              onChange={(event) => setInvite((value) => ({ ...value, salary_currency: event.target.value }))}
+            >
+              <option value="EUR">EUR</option>
+              <option value="LKR">LKR</option>
+            </select>
+          </label>
+          <button className="primary-button employee-submit" disabled={busy} type="submit">
+            {busy ? 'Sending…' : 'Send invitation'}
+          </button>
+        </form>
+
+        {message && <p className="success-message">{message}</p>}
+        {error && <p className="error-message panel-message">{error}</p>}
+      </section>
+
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">TEAM</p>
+            <h2>Employees</h2>
+            <p className="section-copy">Manage employee details, monthly salary and account access.</p>
+          </div>
+          <span className="count-pill">{employees.length}</span>
+        </div>
+
+        <div className="employee-list">
+          {employees.map((employee) => (
+            <article className="employee-card" key={employee.id}>
+              <div className="employee-avatar">{(employee.full_name || employee.email || 'U').charAt(0).toUpperCase()}</div>
+              <div className="employee-main">
+                <div className="employee-name-row">
+                  <strong>{employee.full_name || 'Name not set'}</strong>
+                  <span className={`status-badge ${employee.active ? 'approved' : 'rejected'}`}>
+                    {employee.active ? 'active' : 'inactive'}
+                  </span>
+                  {employee.role === 'admin' && <span className="gold-pill compact-pill">Admin</span>}
+                </div>
+                <span className="employee-email">{employee.email || 'No email'}</span>
+                <div className="employee-meta">
+                  <span>{employee.job_title || 'Job title not set'}</span>
+                  <span>{employee.phone || 'No phone'}</span>
+                  <span>{formatCurrency(Number(employee.monthly_salary || 0), employee.salary_currency || 'EUR')} / month</span>
+                </div>
+              </div>
+              <div className="employee-actions">
+                <button className="small-button" type="button" onClick={() => beginEdit(employee)}>Edit</button>
+                {employee.id !== currentProfile.id && (
+                  <button
+                    className={employee.active ? 'small-button danger-button' : 'small-button success-button'}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => toggleActive(employee)}
+                  >
+                    {employee.active ? 'Deactivate' : 'Activate'}
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {editing && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditing(null)}>
+          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="employee-edit-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="card-title-row">
+              <div>
+                <p className="eyebrow">EMPLOYEE PROFILE</p>
+                <h2 id="employee-edit-title">Edit employee</h2>
+                <p className="section-copy">{editing.email}</p>
+              </div>
+              <button className="icon-close" type="button" onClick={() => setEditing(null)} aria-label="Close">×</button>
+            </div>
+
+            <form className="edit-grid" onSubmit={saveEmployee}>
+              <label>
+                Full name
+                <input value={editValues.full_name} onChange={(event) => setEditValues((value) => ({ ...value, full_name: event.target.value }))} required />
+              </label>
+              <label>
+                Phone
+                <input type="tel" value={editValues.phone} onChange={(event) => setEditValues((value) => ({ ...value, phone: event.target.value }))} />
+              </label>
+              <label>
+                Job title
+                <input value={editValues.job_title} onChange={(event) => setEditValues((value) => ({ ...value, job_title: event.target.value }))} />
+              </label>
+              <label>
+                Monthly salary
+                <input type="number" min="0" step="0.01" inputMode="decimal" value={editValues.monthly_salary} onChange={(event) => setEditValues((value) => ({ ...value, monthly_salary: event.target.value }))} />
+              </label>
+              <label>
+                Currency
+                <select value={editValues.salary_currency} onChange={(event) => setEditValues((value) => ({ ...value, salary_currency: event.target.value }))}>
+                  <option value="EUR">EUR</option>
+                  <option value="LKR">LKR</option>
+                </select>
+              </label>
+              <div className="modal-actions full-row">
+                <button className="outline-light-button" type="button" onClick={() => setEditing(null)}>Cancel</button>
+                <button className="primary-button" disabled={busy} type="submit">{busy ? 'Saving…' : 'Save employee'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
@@ -1058,7 +1457,7 @@ function Dashboard({ profile }: { profile: Profile }) {
       ? supabase.from('income').select('*').order('received_date', { ascending: false }).order('created_at', { ascending: false })
       : null
     const profilesRequest = isAdmin
-      ? supabase.from('profiles').select('id, full_name, email, role, active, job_title').order('full_name')
+      ? supabase.from('profiles').select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency').order('full_name')
       : null
 
     if (incomeRequest) requests.push(incomeRequest)
@@ -1120,6 +1519,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'expense', label: 'Add expense' },
         { view: 'approvals', label: 'Approvals' },
         { view: 'transactions', label: 'Transactions' },
+        { view: 'employees', label: 'Employees' },
       ]
     : [
         { view: 'dashboard', label: 'Dashboard' },
@@ -1212,25 +1612,6 @@ function Dashboard({ profile }: { profile: Profile }) {
               </section>
             )}
 
-            <section className="quick-actions">
-              <button onClick={() => setActiveView(isAdmin ? 'income' : 'expense')}>
-                <span>{isAdmin ? '＋' : '↗'}</span>
-                <strong>{isAdmin ? 'Record income' : 'Submit expense'}</strong>
-                <small>{isAdmin ? 'Add a received EUR payment' : 'Add amount, note and bill photo'}</small>
-              </button>
-              {isAdmin && (
-                <button onClick={() => setActiveView('approvals')}>
-                  <span>✓</span>
-                  <strong>Review expenses</strong>
-                  <small>{totals.pendingCount} waiting for your decision</small>
-                </button>
-              )}
-              <button onClick={() => setActiveView('transactions')}>
-                <span>≡</span>
-                <strong>{isAdmin ? 'View transactions' : 'My submissions'}</strong>
-                <small>See recent business records</small>
-              </button>
-            </section>
           </>
         )}
 
@@ -1250,6 +1631,13 @@ function Dashboard({ profile }: { profile: Profile }) {
             />
           )
         )}
+        {activeView === 'employees' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading employees…</div>
+          ) : (
+            <EmployeeManager currentProfile={profile} profiles={profiles} onChanged={loadData} />
+          )
+        )}
       </main>
     </div>
   )
@@ -1260,6 +1648,11 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [fatalError, setFatalError] = useState('')
+  const [inviteMode, setInviteMode] = useState(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const query = new URLSearchParams(window.location.search)
+    return hash.get('type') === 'invite' || query.get('type') === 'invite'
+  })
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -1284,7 +1677,7 @@ export default function App() {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, active, job_title')
+        .select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency')
         .eq('id', session.user.id)
         .single()
 
@@ -1314,6 +1707,8 @@ export default function App() {
   }
 
   if (!session) return <LoginScreen />
+
+  if (inviteMode) return <PasswordSetupScreen onComplete={() => setInviteMode(false)} />
 
   if (fatalError) {
     return (

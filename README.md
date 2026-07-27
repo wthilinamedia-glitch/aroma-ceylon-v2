@@ -39,3 +39,15 @@ Never add a Supabase secret key or service-role key to this frontend repository.
 - Image compression now targets approximately 700 KB with iterative resize/quality reduction.
 - Database RLS remains the final authorization layer; UI visibility alone is not relied upon.
 - Existing audit triggers continue to record updates and deletions.
+
+
+## V2.2 employees and dashboard cleanup
+
+- Removed the duplicate dashboard quick-action cards; the sticky top navigation is the single navigation area.
+- Added an Admin-only Employees page.
+- Admin can invite regular users through a secure Supabase Edge Function.
+- Employee details include name, phone, job title, monthly salary, salary currency and active status.
+- Admin can edit profiles and activate/deactivate regular users.
+- The only admin cannot deactivate their own account in the UI.
+- Invitation links open a password-setup screen in the app.
+- See `03_EMPLOYEES_SETUP.md` for the Edge Function and Auth URL setup.
