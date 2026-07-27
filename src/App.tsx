@@ -45,11 +45,15 @@ type ExpenseRecord = {
 
 type CompressedImage = {
   blob: Blob
-  extension: 'webp' | 'jpg'
-  contentType: string
+  extension: 'jpg'
+  contentType: 'image/jpeg'
   originalBytes: number
   compressedBytes: number
 }
+
+type EditableTransaction =
+  | { kind: 'income'; record: IncomeRecord }
+  | { kind: 'expense'; record: ExpenseRecord }
 
 const expenseCategories = [
   'Packaging',
@@ -100,42 +104,59 @@ function formatBytes(bytes: number) {
 }
 
 async function compressBillImage(file: File): Promise<CompressedImage> {
-  const bitmap = await createImageBitmap(file)
-  const maxDimension = 1600
-  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
-  const width = Math.max(1, Math.round(bitmap.width * scale))
-  const height = Math.max(1, Math.round(bitmap.height * scale))
+  const targetBytes = 700 * 1024
+  const initialMaxDimension = 1280
+
+  const source = await createImageBitmap(file)
+  let scale = Math.min(1, initialMaxDimension / Math.max(source.width, source.height))
+  let width = Math.max(1, Math.round(source.width * scale))
+  let height = Math.max(1, Math.round(source.height * scale))
 
   const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
   const context = canvas.getContext('2d')
-  if (!context) throw new Error('Unable to prepare the bill image.')
-
-  context.fillStyle = '#ffffff'
-  context.fillRect(0, 0, width, height)
-  context.drawImage(bitmap, 0, 0, width, height)
-  bitmap.close()
-
-  const toBlob = (type: string, quality: number) =>
-    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
-
-  let blob = await toBlob('image/webp', 0.66)
-  let extension: 'webp' | 'jpg' = 'webp'
-  let contentType = 'image/webp'
-
-  if (!blob) {
-    blob = await toBlob('image/jpeg', 0.68)
-    extension = 'jpg'
-    contentType = 'image/jpeg'
+  if (!context) {
+    source.close()
+    throw new Error('Unable to prepare the bill image.')
   }
 
+  const render = () => {
+    canvas.width = width
+    canvas.height = height
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, width, height)
+    context.drawImage(source, 0, 0, width, height)
+  }
+
+  const toJpeg = (quality: number) =>
+    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))
+
+  render()
+  let blob: Blob | null = null
+  const qualities = [0.72, 0.62, 0.52, 0.42, 0.34]
+
+  for (let resizeAttempt = 0; resizeAttempt < 5; resizeAttempt += 1) {
+    for (const quality of qualities) {
+      blob = await toJpeg(quality)
+      if (blob && blob.size <= targetBytes) break
+    }
+    if (blob && blob.size <= targetBytes) break
+
+    const resizeScale = Math.max(640 / Math.max(width, height), 0.78)
+    width = Math.max(1, Math.round(width * resizeScale))
+    height = Math.max(1, Math.round(height * resizeScale))
+    render()
+  }
+
+  source.close()
   if (!blob) throw new Error('Unable to compress the bill image.')
+  if (blob.size > 1_500_000) {
+    throw new Error('The photo is still too large. Please crop the bill and try again.')
+  }
 
   return {
     blob,
-    extension,
-    contentType,
+    extension: 'jpg',
+    contentType: 'image/jpeg',
     originalBytes: file.size,
     compressedBytes: blob.size,
   }
@@ -503,6 +524,285 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
   )
 }
 
+function TransactionEditor({
+  profile,
+  editing,
+  onClose,
+  onSaved,
+}: {
+  profile: Profile
+  editing: EditableTransaction
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState(expenseCategories[0])
+  const [date, setDate] = useState(localIsoDate())
+  const [amount, setAmount] = useState('')
+  const [exchangeRate, setExchangeRate] = useState('')
+  const [note, setNote] = useState('')
+  const [replacementBill, setReplacementBill] = useState<File | null>(null)
+  const [removeBill, setRemoveBill] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [compressionInfo, setCompressionInfo] = useState('')
+
+  useEffect(() => {
+    if (editing.kind === 'income') {
+      setTitle(editing.record.store_name)
+      setDate(editing.record.received_date)
+      setAmount(String(editing.record.amount_eur))
+      setExchangeRate(String(editing.record.exchange_rate))
+      setNote(editing.record.note || '')
+    } else {
+      setTitle(editing.record.title)
+      setCategory(editing.record.category)
+      setDate(editing.record.expense_date)
+      setAmount(String(editing.record.amount_lkr))
+      setNote(editing.record.note || '')
+      setRemoveBill(false)
+      setReplacementBill(null)
+    }
+    setMessage('')
+    setCompressionInfo('')
+  }, [editing])
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    setCompressionInfo('')
+
+    if (editing.kind === 'income') {
+      const euro = Number(amount)
+      const rate = Number(exchangeRate)
+      if (!title.trim() || euro <= 0 || rate <= 0) {
+        setMessage('Please enter the store, EUR amount and exchange rate.')
+        setBusy(false)
+        return
+      }
+
+      const { error } = await supabase
+        .from('income')
+        .update({
+          store_name: title.trim(),
+          received_date: date,
+          amount_eur: euro,
+          exchange_rate: rate,
+          note: note.trim() || null,
+        })
+        .eq('id', editing.record.id)
+
+      if (error) {
+        setMessage(error.message)
+        setBusy(false)
+        return
+      }
+
+      onSaved()
+      onClose()
+      return
+    }
+
+    const numericAmount = Number(amount)
+    if (!title.trim() || numericAmount <= 0) {
+      setMessage('Please enter an expense name and valid amount.')
+      setBusy(false)
+      return
+    }
+
+    let nextBillPath: string | null = removeBill ? null : editing.record.bill_path
+    let uploadedPath: string | null = null
+
+    if (replacementBill) {
+      try {
+        const compressed = await compressBillImage(replacementBill)
+        setCompressionInfo(
+          `Bill compressed from ${formatBytes(compressed.originalBytes)} to ${formatBytes(compressed.compressedBytes)}.`,
+        )
+        uploadedPath = `${profile.id}/${editing.record.id}/bill-${Date.now()}.jpg`
+        const { error: uploadError } = await supabase.storage
+          .from('expense-bills')
+          .upload(uploadedPath, compressed.blob, {
+            contentType: compressed.contentType,
+            cacheControl: '3600',
+            upsert: false,
+          })
+        if (uploadError) throw uploadError
+        nextBillPath = uploadedPath
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Unable to upload the replacement bill.')
+        setBusy(false)
+        return
+      }
+    }
+
+    const { error } = await supabase
+      .from('expenses')
+      .update({
+        title: title.trim(),
+        category,
+        amount_lkr: numericAmount,
+        expense_date: date,
+        note: note.trim() || null,
+        bill_path: nextBillPath,
+      })
+      .eq('id', editing.record.id)
+
+    if (error) {
+      if (uploadedPath) await supabase.storage.from('expense-bills').remove([uploadedPath])
+      setMessage(error.message)
+      setBusy(false)
+      return
+    }
+
+    if (
+      editing.record.bill_path &&
+      editing.record.bill_path !== nextBillPath
+    ) {
+      await supabase.storage.from('expense-bills').remove([editing.record.bill_path])
+    }
+
+    onSaved()
+    onClose()
+  }
+
+  const converted = editing.kind === 'income'
+    ? Number(amount || 0) * Number(exchangeRate || 0)
+    : 0
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transaction-editor-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">EDIT TRANSACTION</p>
+            <h2 id="transaction-editor-title">
+              {editing.kind === 'income' ? 'Edit income' : 'Edit expense'}
+            </h2>
+          </div>
+          <button className="close-button" type="button" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <form className="business-form" onSubmit={submit}>
+          <label className="full-field">
+            {editing.kind === 'income' ? 'Store / customer' : 'Expense name'}
+            <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+          </label>
+
+          {editing.kind === 'expense' && (
+            <label className="full-field">
+              Category
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                {expenseCategories.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+          )}
+
+          <div className="form-grid">
+            <label>
+              {editing.kind === 'income' ? 'Received date' : 'Expense date'}
+              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
+            </label>
+            <label>
+              {editing.kind === 'income' ? 'Amount received (€)' : 'Amount (LKR)'}
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                required
+              />
+            </label>
+          </div>
+
+          {editing.kind === 'income' && (
+            <>
+              <label className="full-field">
+                EUR → LKR exchange rate
+                <input
+                  type="number"
+                  min="0.0001"
+                  step="0.0001"
+                  inputMode="decimal"
+                  value={exchangeRate}
+                  onChange={(event) => setExchangeRate(event.target.value)}
+                  required
+                />
+              </label>
+              <div className="calculation-box">
+                <span>Updated income in LKR</span>
+                <strong>{formatLKR(converted)}</strong>
+              </div>
+            </>
+          )}
+
+          <label className="full-field">
+            Note (optional)
+            <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} />
+          </label>
+
+          {editing.kind === 'expense' && (
+            <>
+              <label className="upload-field full-field">
+                Replace bill photo (optional)
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(event) => {
+                    setReplacementBill(event.target.files?.[0] || null)
+                    if (event.target.files?.[0]) setRemoveBill(false)
+                  }}
+                />
+                <span>
+                  {replacementBill
+                    ? `${replacementBill.name} • ${formatBytes(replacementBill.size)}`
+                    : editing.record.bill_path
+                      ? 'The current bill will stay unless replaced or removed.'
+                      : 'No bill is currently attached.'}
+                </span>
+              </label>
+
+              {editing.record.bill_path && (
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={removeBill}
+                    onChange={(event) => {
+                      setRemoveBill(event.target.checked)
+                      if (event.target.checked) setReplacementBill(null)
+                    }}
+                  />
+                  Remove the current bill photo
+                </label>
+              )}
+            </>
+          )}
+
+          {compressionInfo && <p className="success-message">{compressionInfo}</p>}
+          {message && <p className="form-message">{message}</p>}
+
+          <div className="modal-actions">
+            <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className="primary-button" type="submit" disabled={busy}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  )
+}
+
 function TransactionsPanel({
   profile,
   income,
@@ -520,6 +820,7 @@ function TransactionsPanel({
 }) {
   const [busyId, setBusyId] = useState('')
   const [message, setMessage] = useState('')
+  const [editing, setEditing] = useState<EditableTransaction | null>(null)
   const isAdmin = profile.role === 'admin'
 
   async function review(expense: ExpenseRecord, status: 'approved' | 'rejected') {
@@ -557,12 +858,53 @@ function TransactionsPanel({
     else window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
   }
 
+  async function deleteExpense(item: ExpenseRecord) {
+    const allowed = isAdmin || (item.submitted_by === profile.id && item.status === 'pending')
+    if (!allowed) return
+    if (!window.confirm(`Delete expense “${item.title}”? This cannot be undone.`)) return
+
+    setBusyId(item.id)
+    setMessage('')
+    const { error } = await supabase.from('expenses').delete().eq('id', item.id)
+    if (error) {
+      setMessage(error.message)
+    } else {
+      if (item.bill_path) {
+        const { error: storageError } = await supabase.storage.from('expense-bills').remove([item.bill_path])
+        if (storageError) setMessage(`Expense deleted. Bill cleanup warning: ${storageError.message}`)
+        else setMessage('Expense deleted.')
+      } else {
+        setMessage('Expense deleted.')
+      }
+      onChanged()
+    }
+    setBusyId('')
+  }
+
+  async function deleteIncome(item: IncomeRecord) {
+    if (!isAdmin) return
+    if (!window.confirm(`Delete income from “${item.store_name}”? This cannot be undone.`)) return
+
+    setBusyId(item.id)
+    setMessage('')
+    const { error } = await supabase.from('income').delete().eq('id', item.id)
+    if (error) setMessage(error.message)
+    else {
+      setMessage('Income deleted.')
+      onChanged()
+    }
+    setBusyId('')
+  }
+
   const pending = expenses.filter((item) => item.status === 'pending')
-  const otherExpenses = expenses.filter((item) => item.status !== 'pending')
+  const sortedExpenses = [...expenses].sort((a, b) => {
+    const dateCompare = b.expense_date.localeCompare(a.expense_date)
+    return dateCompare || b.created_at.localeCompare(a.created_at)
+  })
 
   return (
     <div className="stacked-sections">
-      {isAdmin && (
+      {isAdmin && mode === 'approvals' && (
         <section className="content-card">
           <div className="card-title-row">
             <div>
@@ -590,8 +932,10 @@ function TransactionsPanel({
                     <strong className="expense-value">−{formatLKR(item.amount_lkr)}</strong>
                     <div className="record-actions">
                       {item.bill_path && <button className="small-button" onClick={() => openBill(item.bill_path!)}>View bill</button>}
+                      <button className="edit-button" onClick={() => setEditing({ kind: 'expense', record: item })}>Edit</button>
                       <button className="approve-button" disabled={busyId === item.id} onClick={() => review(item, 'approved')}>Approve</button>
                       <button className="reject-button" disabled={busyId === item.id} onClick={() => review(item, 'rejected')}>Reject</button>
+                      <button className="delete-button" disabled={busyId === item.id} onClick={() => deleteExpense(item)}>Delete</button>
                     </div>
                   </div>
                 </article>
@@ -607,29 +951,37 @@ function TransactionsPanel({
           <div className="card-title-row">
             <div>
               <p className="eyebrow">EXPENSE HISTORY</p>
-              <h2>{isAdmin ? 'Reviewed expenses' : 'My submissions'}</h2>
+              <h2>{isAdmin ? 'Expense transactions' : 'My submissions'}</h2>
             </div>
           </div>
-          {otherExpenses.length === 0 ? (
-            <div className="empty-state">No reviewed expenses yet.</div>
+          {sortedExpenses.length === 0 ? (
+            <div className="empty-state">No expenses yet.</div>
           ) : (
             <div className="record-list">
-              {otherExpenses.map((item) => (
-                <article className="record-card compact" key={item.id}>
-                  <div className="record-main">
-                    <div className="record-title-line">
-                      <strong>{item.title}</strong>
-                      <StatusBadge status={item.status} />
+              {sortedExpenses.map((item) => {
+                const canChange = isAdmin || (item.submitted_by === profile.id && item.status === 'pending')
+                return (
+                  <article className="record-card compact" key={item.id}>
+                    <div className="record-main">
+                      <div className="record-title-line">
+                        <strong>{item.title}</strong>
+                        <StatusBadge status={item.status} />
+                      </div>
+                      <p>{item.category} • {formatDate(item.expense_date)}{isAdmin ? ` • ${profileNames.get(item.submitted_by) || 'User'}` : ''}</p>
+                      {item.note && <p className="record-note">{item.note}</p>}
+                      {item.rejection_reason && <p className="rejection-note">Reason: {item.rejection_reason}</p>}
                     </div>
-                    <p>{item.category} • {formatDate(item.expense_date)}{isAdmin ? ` • ${profileNames.get(item.submitted_by) || 'User'}` : ''}</p>
-                    {item.rejection_reason && <p className="rejection-note">Reason: {item.rejection_reason}</p>}
-                  </div>
-                  <div className="record-side">
-                    <strong className="expense-value">−{formatLKR(item.amount_lkr)}</strong>
-                    {item.bill_path && <button className="small-button" onClick={() => openBill(item.bill_path!)}>View bill</button>}
-                  </div>
-                </article>
-              ))}
+                    <div className="record-side">
+                      <strong className="expense-value">−{formatLKR(item.amount_lkr)}</strong>
+                      <div className="record-actions">
+                        {item.bill_path && <button className="small-button" onClick={() => openBill(item.bill_path!)}>View bill</button>}
+                        {canChange && <button className="edit-button" onClick={() => setEditing({ kind: 'expense', record: item })}>Edit</button>}
+                        {canChange && <button className="delete-button" disabled={busyId === item.id} onClick={() => deleteExpense(item)}>Delete</button>}
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
             </div>
           )}
         </section>
@@ -654,12 +1006,28 @@ function TransactionsPanel({
                     <p>{formatDate(item.received_date)} • {formatEUR(item.amount_eur)} × {Number(item.exchange_rate).toFixed(4)}</p>
                     {item.note && <p className="record-note">{item.note}</p>}
                   </div>
-                  <strong className="income-value">+{formatLKR(item.amount_lkr)}</strong>
+                  <div className="record-side">
+                    <strong className="income-value">+{formatLKR(item.amount_lkr)}</strong>
+                    <div className="record-actions">
+                      <button className="edit-button" onClick={() => setEditing({ kind: 'income', record: item })}>Edit</button>
+                      <button className="delete-button" disabled={busyId === item.id} onClick={() => deleteIncome(item)}>Delete</button>
+                    </div>
+                  </div>
                 </article>
               ))}
             </div>
           )}
         </section>
+      )}
+
+      {message && mode === 'transactions' && <p className="form-message page-message">{message}</p>}
+      {editing && (
+        <TransactionEditor
+          profile={profile}
+          editing={editing}
+          onClose={() => setEditing(null)}
+          onSaved={onChanged}
+        />
       )}
     </div>
   )
@@ -667,6 +1035,7 @@ function TransactionsPanel({
 
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
+  const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
   const [activeView, setActiveView] = useState<View>('dashboard')
   const [income, setIncome] = useState<IncomeRecord[]>([])
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([])
@@ -791,7 +1160,8 @@ function Dashboard({ profile }: { profile: Profile }) {
           <>
             <section className="welcome-panel">
               <p className="eyebrow">{isAdmin ? 'ADMIN CONTROL CENTRE' : 'MY WORKSPACE'}</p>
-              <h1>Hello, {profile.full_name || profile.email || 'Team Member'}</h1>
+              <h1>Hello, {displayName}</h1>
+              {profile.email && <p className="welcome-email">{profile.email}</p>}
               <p>
                 {isAdmin
                   ? 'Income, approved expenses and business profit are now connected to your Supabase database.'

@@ -28,3 +28,14 @@ Your existing Netlify environment variables remain unchanged:
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
 Never add a Supabase secret key or service-role key to this frontend repository.
+
+
+## V2.1 transaction controls
+
+- Admin can edit or delete any income or expense transaction.
+- Team members can edit or delete only their own pending expenses.
+- Expense bill files are removed from private Storage when the transaction is deleted.
+- Bill replacement/removal is available from the expense editor.
+- Image compression now targets approximately 700 KB with iterative resize/quality reduction.
+- Database RLS remains the final authorization layer; UI visibility alone is not relied upon.
+- Existing audit triggers continue to record updates and deletions.
