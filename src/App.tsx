@@ -1,10 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payslips' | 'profile'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'products' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -82,6 +83,23 @@ type PayrollRecord = {
   paid_at: string | null
 }
 
+type ProductRecord = {
+  id: string
+  name: string
+  sku: string
+  category: string
+  pack_size: string | null
+  selling_price: number
+  cost_price: number | null
+  currency: string
+  description: string | null
+  photo_path: string | null
+  active: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
 type CompressedImage = {
   blob: Blob
   extension: 'jpg'
@@ -103,6 +121,15 @@ const expenseCategories = [
   'Marketing',
   'Equipment',
   'Salary / Staff',
+  'Other',
+]
+
+const productCategories = [
+  'Chilli Products',
+  'Curry Powders',
+  'Pepper Products',
+  'Spice Mixes',
+  'Whole Spices',
   'Other',
 ]
 
@@ -179,7 +206,7 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-async function compressBillImage(file: File): Promise<CompressedImage> {
+async function compressUploadImage(file: File): Promise<CompressedImage> {
   const targetBytes = 700 * 1024
   const initialMaxDimension = 1280
 
@@ -192,7 +219,7 @@ async function compressBillImage(file: File): Promise<CompressedImage> {
   const context = canvas.getContext('2d')
   if (!context) {
     source.close()
-    throw new Error('Unable to prepare the bill image.')
+    throw new Error('Unable to prepare the image.')
   }
 
   const render = () => {
@@ -224,9 +251,9 @@ async function compressBillImage(file: File): Promise<CompressedImage> {
   }
 
   source.close()
-  if (!blob) throw new Error('Unable to compress the bill image.')
+  if (!blob) throw new Error('Unable to compress the image.')
   if (blob.size > 1_500_000) {
-    throw new Error('The photo is still too large. Please crop the bill and try again.')
+    throw new Error('The photo is still too large. Please crop it and try again.')
   }
 
   return {
@@ -570,7 +597,7 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
     let billWarning = ''
     if (bill) {
       try {
-        const compressed = await compressBillImage(bill)
+        const compressed = await compressUploadImage(bill)
         setCompressionInfo(
           `Bill compressed from ${formatBytes(compressed.originalBytes)} to ${formatBytes(compressed.compressedBytes)}.`,
         )
@@ -767,7 +794,7 @@ function TransactionEditor({
 
     if (replacementBill) {
       try {
-        const compressed = await compressBillImage(replacementBill)
+        const compressed = await compressUploadImage(replacementBill)
         setCompressionInfo(
           `Bill compressed from ${formatBytes(compressed.originalBytes)} to ${formatBytes(compressed.compressedBytes)}.`,
         )
@@ -1876,6 +1903,401 @@ function AttendancePanel({
   )
 }
 
+
+function ProductManager({
+  profile,
+  products,
+  onChanged,
+}: {
+  profile: Profile
+  products: ProductRecord[]
+  onChanged: () => void
+}) {
+  const emptyForm = {
+    name: '',
+    sku: '',
+    category: productCategories[0],
+    pack_size: '',
+    selling_price: '',
+    cost_price: '',
+    currency: 'EUR',
+    description: '',
+  }
+  const [form, setForm] = useState(emptyForm)
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [editing, setEditing] = useState<ProductRecord | null>(null)
+  const [editForm, setEditForm] = useState(emptyForm)
+  const [replacementPhoto, setReplacementPhoto] = useState<File | null>(null)
+  const [removePhoto, setRemovePhoto] = useState(false)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('active')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({})
+
+  const visibleProducts = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return products.filter((item) => {
+      const matchesStatus = statusFilter === 'all'
+        || (statusFilter === 'active' && item.active)
+        || (statusFilter === 'archived' && !item.active)
+      const matchesSearch = !term
+        || item.name.toLowerCase().includes(term)
+        || item.sku.toLowerCase().includes(term)
+        || item.category.toLowerCase().includes(term)
+        || (item.pack_size || '').toLowerCase().includes(term)
+      return matchesStatus && matchesSearch
+    })
+  }, [products, search, statusFilter])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadPhotos() {
+      const entries = await Promise.all(
+        products
+          .filter((item) => item.photo_path)
+          .map(async (item) => {
+            const { data } = await supabase.storage
+              .from('product-images')
+              .createSignedUrl(item.photo_path as string, 3600)
+            return [item.id, data?.signedUrl || ''] as const
+          }),
+      )
+      if (!cancelled) setPhotoUrls(Object.fromEntries(entries))
+    }
+    loadPhotos()
+    return () => { cancelled = true }
+  }, [products])
+
+  function validate(values: typeof emptyForm) {
+    if (!values.name.trim() || !values.sku.trim()) return 'Product name and SKU are required.'
+    if (Number(values.selling_price) < 0 || values.selling_price === '') return 'Enter a valid selling price.'
+    if (values.cost_price && Number(values.cost_price) < 0) return 'Cost price cannot be negative.'
+    return ''
+  }
+
+  async function uploadPhoto(file: File, productId: string) {
+    const compressed = await compressUploadImage(file)
+    const path = `${profile.id}/${productId}/product-${Date.now()}.jpg`
+    const { error: uploadError } = await supabase.storage
+      .from('product-images')
+      .upload(path, compressed.blob, {
+        contentType: compressed.contentType,
+        cacheControl: '3600',
+        upsert: false,
+      })
+    if (uploadError) throw uploadError
+    return { path, originalBytes: compressed.originalBytes, compressedBytes: compressed.compressedBytes }
+  }
+
+  async function addProduct(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const validation = validate(form)
+    if (validation) {
+      setError(validation)
+      return
+    }
+
+    setBusy(true)
+    const id = crypto.randomUUID()
+    let photoPath: string | null = null
+    let compressionMessage = ''
+
+    try {
+      if (photo) {
+        const uploaded = await uploadPhoto(photo, id)
+        photoPath = uploaded.path
+        compressionMessage = ` Photo compressed from ${formatBytes(uploaded.originalBytes)} to ${formatBytes(uploaded.compressedBytes)}.`
+      }
+
+      const { error: insertError } = await supabase.from('products').insert({
+        id,
+        name: form.name.trim(),
+        sku: form.sku.trim().toUpperCase(),
+        category: form.category,
+        pack_size: form.pack_size.trim() || null,
+        selling_price: Number(form.selling_price),
+        cost_price: form.cost_price ? Number(form.cost_price) : null,
+        currency: form.currency,
+        description: form.description.trim() || null,
+        photo_path: photoPath,
+        active: true,
+        created_by: profile.id,
+      })
+
+      if (insertError) throw insertError
+      setForm(emptyForm)
+      setPhoto(null)
+      setMessage(`Product added successfully.${compressionMessage}`)
+      onChanged()
+    } catch (caught) {
+      if (photoPath) await supabase.storage.from('product-images').remove([photoPath])
+      setError(caught instanceof Error ? caught.message : 'Unable to add the product.')
+    }
+    setBusy(false)
+  }
+
+  function beginEdit(product: ProductRecord) {
+    setEditing(product)
+    setEditForm({
+      name: product.name,
+      sku: product.sku,
+      category: product.category,
+      pack_size: product.pack_size || '',
+      selling_price: String(product.selling_price),
+      cost_price: product.cost_price === null ? '' : String(product.cost_price),
+      currency: product.currency || 'EUR',
+      description: product.description || '',
+    })
+    setReplacementPhoto(null)
+    setRemovePhoto(false)
+    setMessage('')
+    setError('')
+  }
+
+  async function saveProduct(event: FormEvent) {
+    event.preventDefault()
+    if (!editing) return
+    setMessage('')
+    setError('')
+    const validation = validate(editForm)
+    if (validation) {
+      setError(validation)
+      return
+    }
+
+    setBusy(true)
+    let nextPhotoPath: string | null = removePhoto ? null : editing.photo_path
+    let uploadedPath: string | null = null
+
+    try {
+      if (replacementPhoto) {
+        const uploaded = await uploadPhoto(replacementPhoto, editing.id)
+        nextPhotoPath = uploaded.path
+        uploadedPath = uploaded.path
+      }
+
+      const { error: updateError } = await supabase
+        .from('products')
+        .update({
+          name: editForm.name.trim(),
+          sku: editForm.sku.trim().toUpperCase(),
+          category: editForm.category,
+          pack_size: editForm.pack_size.trim() || null,
+          selling_price: Number(editForm.selling_price),
+          cost_price: editForm.cost_price ? Number(editForm.cost_price) : null,
+          currency: editForm.currency,
+          description: editForm.description.trim() || null,
+          photo_path: nextPhotoPath,
+        })
+        .eq('id', editing.id)
+
+      if (updateError) throw updateError
+
+      if (editing.photo_path && editing.photo_path !== nextPhotoPath) {
+        await supabase.storage.from('product-images').remove([editing.photo_path])
+      }
+
+      setEditing(null)
+      setMessage('Product updated successfully.')
+      onChanged()
+    } catch (caught) {
+      if (uploadedPath) await supabase.storage.from('product-images').remove([uploadedPath])
+      setError(caught instanceof Error ? caught.message : 'Unable to update the product.')
+    }
+    setBusy(false)
+  }
+
+  async function toggleArchived(product: ProductRecord) {
+    const action = product.active ? 'archive' : 'restore'
+    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${product.name}?`)) return
+    setBusy(true)
+    setMessage('')
+    setError('')
+    const { error: updateError } = await supabase
+      .from('products')
+      .update({ active: !product.active })
+      .eq('id', product.id)
+    if (updateError) setError(updateError.message)
+    else {
+      setMessage(product.active ? 'Product archived.' : 'Product restored.')
+      onChanged()
+    }
+    setBusy(false)
+  }
+
+  const formFields = (
+    values: typeof emptyForm,
+    setValues: Dispatch<SetStateAction<typeof emptyForm>>,
+  ) => (
+    <>
+      <label>
+        Product name
+        <input value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} required />
+      </label>
+      <label>
+        SKU / Product code
+        <input value={values.sku} onChange={(event) => setValues((current) => ({ ...current, sku: event.target.value }))} placeholder="AC-CHILLI-100" required />
+      </label>
+      <label>
+        Category
+        <select value={values.category} onChange={(event) => setValues((current) => ({ ...current, category: event.target.value }))}>
+          {productCategories.map((category) => <option key={category}>{category}</option>)}
+        </select>
+      </label>
+      <label>
+        Pack size
+        <input value={values.pack_size} onChange={(event) => setValues((current) => ({ ...current, pack_size: event.target.value }))} placeholder="100 g" />
+      </label>
+      <label>
+        Selling price
+        <input type="number" min="0" step="0.01" inputMode="decimal" value={values.selling_price} onChange={(event) => setValues((current) => ({ ...current, selling_price: event.target.value }))} required />
+      </label>
+      <label>
+        Cost price (optional)
+        <input type="number" min="0" step="0.01" inputMode="decimal" value={values.cost_price} onChange={(event) => setValues((current) => ({ ...current, cost_price: event.target.value }))} />
+      </label>
+      <label>
+        Currency
+        <select value={values.currency} onChange={(event) => setValues((current) => ({ ...current, currency: event.target.value }))}>
+          <option value="EUR">EUR</option>
+          <option value="LKR">LKR</option>
+        </select>
+      </label>
+      <label className="product-description-field">
+        Description (optional)
+        <textarea rows={3} value={values.description} onChange={(event) => setValues((current) => ({ ...current, description: event.target.value }))} />
+      </label>
+    </>
+  )
+
+  return (
+    <div className="stacked-sections">
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">PRODUCT CATALOGUE</p>
+            <h2>Add a product</h2>
+            <p className="section-copy">Create products now so they can be selected later in shop deliveries and invoices.</p>
+          </div>
+          <span className="gold-pill">Admin only</span>
+        </div>
+        <form className="product-form" onSubmit={addProduct}>
+          {formFields(form, setForm)}
+          <label className="upload-field product-photo-field">
+            Product photo (optional)
+            <input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} />
+            <span>{photo ? `${photo.name} • ${formatBytes(photo.size)}` : 'Choose a clear product or package photo.'}</span>
+          </label>
+          <button className="primary-button product-submit" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Add product'}</button>
+        </form>
+        {message && <p className="success-message product-panel-message">{message}</p>}
+        {error && <p className="error-message product-panel-message">{error}</p>}
+      </section>
+
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">CATALOGUE</p>
+            <h2>Products</h2>
+            <p className="section-copy">Edit pricing and details, or archive products that are no longer sold.</p>
+          </div>
+          <span className="count-pill">{products.filter((item) => item.active).length}</span>
+        </div>
+
+        <div className="product-toolbar">
+          <label>
+            Search
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, SKU, category…" />
+          </label>
+          <label>
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+
+        {visibleProducts.length === 0 ? (
+          <div className="empty-state">No products match this view.</div>
+        ) : (
+          <div className="product-grid">
+            {visibleProducts.map((product) => (
+              <article className={`product-card ${product.active ? '' : 'archived'}`} key={product.id}>
+                <div className="product-image-wrap">
+                  {photoUrls[product.id]
+                    ? <img src={photoUrls[product.id]} alt={product.name} />
+                    : <div className="product-image-placeholder">{product.name.charAt(0).toUpperCase()}</div>}
+                </div>
+                <div className="product-card-body">
+                  <div className="product-card-heading">
+                    <div>
+                      <span className="product-sku">{product.sku}</span>
+                      <h3>{product.name}</h3>
+                    </div>
+                    <span className={`status-badge ${product.active ? 'approved' : 'rejected'}`}>{product.active ? 'active' : 'archived'}</span>
+                  </div>
+                  <p>{product.category}{product.pack_size ? ` • ${product.pack_size}` : ''}</p>
+                  {product.description && <p className="product-description">{product.description}</p>}
+                  <div className="product-prices">
+                    <div><span>Selling</span><strong>{formatCurrency(Number(product.selling_price || 0), product.currency)}</strong></div>
+                    <div><span>Cost</span><strong>{product.cost_price === null ? '—' : formatCurrency(Number(product.cost_price), product.currency)}</strong></div>
+                  </div>
+                  <div className="product-actions">
+                    <button className="edit-button" type="button" onClick={() => beginEdit(product)}>Edit</button>
+                    <button className={product.active ? 'delete-button' : 'small-button success-button'} type="button" disabled={busy} onClick={() => toggleArchived(product)}>
+                      {product.active ? 'Archive' : 'Restore'}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {editing && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditing(null)}>
+          <section className="modal-card product-modal" role="dialog" aria-modal="true" aria-labelledby="product-edit-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="card-title-row">
+              <div>
+                <p className="eyebrow">PRODUCT CATALOGUE</p>
+                <h2 id="product-edit-title">Edit product</h2>
+                <p className="section-copy">{editing.sku}</p>
+              </div>
+              <button className="icon-close" type="button" onClick={() => setEditing(null)} aria-label="Close">×</button>
+            </div>
+            <form className="product-form" onSubmit={saveProduct}>
+              {formFields(editForm, setEditForm)}
+              <label className="upload-field product-photo-field">
+                Replace product photo
+                <input type="file" accept="image/*" onChange={(event) => setReplacementPhoto(event.target.files?.[0] || null)} />
+                <span>{replacementPhoto ? `${replacementPhoto.name} • ${formatBytes(replacementPhoto.size)}` : 'Leave empty to keep the current photo.'}</span>
+              </label>
+              {editing.photo_path && (
+                <label className="product-remove-photo">
+                  <input type="checkbox" checked={removePhoto} onChange={(event) => setRemovePhoto(event.target.checked)} />
+                  Remove current photo
+                </label>
+              )}
+              <div className="modal-actions product-modal-actions">
+                <button className="outline-light-button" type="button" onClick={() => setEditing(null)}>Cancel</button>
+                <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save product'}</button>
+              </div>
+            </form>
+            {error && <p className="error-message product-panel-message">{error}</p>}
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
@@ -1885,6 +2307,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [profiles, setProfiles] = useState<Profile[]>([profile])
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([])
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([])
+  const [products, setProducts] = useState<ProductRecord[]>([])
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
 
@@ -1914,6 +2337,9 @@ function Dashboard({ profile }: { profile: Profile }) {
     const profilesRequest = isAdmin
       ? supabase.from('profiles').select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency').order('full_name')
       : null
+    const productsRequest = isAdmin
+      ? supabase.from('products').select('*').order('name')
+      : null
 
     const results = await Promise.all([
       expenseRequest,
@@ -1921,6 +2347,7 @@ function Dashboard({ profile }: { profile: Profile }) {
       payrollRequest,
       ...(incomeRequest ? [incomeRequest] : []),
       ...(profilesRequest ? [profilesRequest] : []),
+      ...(productsRequest ? [productsRequest] : []),
     ])
 
     let index = 0
@@ -1942,11 +2369,18 @@ function Dashboard({ profile }: { profile: Profile }) {
       setIncome(incomeResult.data || [])
     }
     if (profilesRequest) {
-      const profilesResult = results[index] as { data: Profile[] | null; error: { message: string } | null }
+      const profilesResult = results[index++] as { data: Profile[] | null; error: { message: string } | null }
       if (profilesResult.error) setDataError(profilesResult.error.message)
       setProfiles(profilesResult.data || [profile])
     } else {
       setProfiles([profile])
+    }
+    if (productsRequest) {
+      const productsResult = results[index] as { data: ProductRecord[] | null; error: { message: string } | null }
+      if (productsResult.error) setDataError(productsResult.error.message)
+      setProducts(productsResult.data || [])
+    } else {
+      setProducts([])
     }
 
     setLoadingData(false)
@@ -1990,6 +2424,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'transactions', label: 'Transactions' },
         { view: 'employees', label: 'Employees' },
         { view: 'attendance', label: 'Attendance' },
+        { view: 'products', label: 'Products' },
       ]
     : [{ view: 'dashboard', label: 'Home' }]
 
@@ -2108,6 +2543,13 @@ function Dashboard({ profile }: { profile: Profile }) {
               onChanged={loadData}
               onBack={employeeBack}
             />
+          )
+        )}
+        {activeView === 'products' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading products…</div>
+          ) : (
+            <ProductManager profile={profile} products={products} onChanged={loadData} />
           )
         )}
         {activeView === 'payslips' && !isAdmin && (

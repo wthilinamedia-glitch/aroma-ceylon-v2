@@ -60,3 +60,16 @@ Never add a Supabase secret key or service-role key to this frontend repository.
 - Employee read-only monthly attendance calendar and totals.
 - Employee profile view and salary/payslip history placeholder using existing secure payroll data.
 - Employee top navigation stays uncluttered: Home is the only persistent item; module pages return through Back to my home.
+
+
+## V2.4 Products catalogue
+
+- Admin-only product catalogue
+- Product name, SKU, category, pack size, selling price and optional cost price
+- EUR or LKR product pricing
+- Optional compressed product photo in private Supabase Storage
+- Search and active/archived filters
+- Edit, archive and restore controls
+- Database audit history
+
+Run `05_PRODUCTS_SETUP.sql` before deploying this version.
