@@ -6,7 +6,7 @@ import { supabase } from './lib/supabase'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'payslips' | 'profile'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -101,6 +101,29 @@ type ProductRecord = {
   currency: string
   description: string | null
   photo_path: string | null
+  active: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+type ShopRecord = {
+  id: string
+  shop_number: number
+  shop_code: string
+  shop_name: string
+  contact_person: string | null
+  phone: string | null
+  email: string | null
+  address_line_1: string | null
+  address_line_2: string | null
+  city: string | null
+  postal_code: string | null
+  country: string
+  vat_number: string | null
+  payment_terms: string
+  default_currency: string
+  notes: string | null
   active: boolean
   created_by: string
   created_at: string
@@ -2998,6 +3021,360 @@ function ProductManager({
   )
 }
 
+
+function ShopManager({
+  profile,
+  shops,
+  onChanged,
+}: {
+  profile: Profile
+  shops: ShopRecord[]
+  onChanged: () => void
+}) {
+  const emptyForm = {
+    shop_name: '',
+    contact_person: '',
+    phone: '',
+    email: '',
+    address_line_1: '',
+    address_line_2: '',
+    city: '',
+    postal_code: '',
+    country: 'Italy',
+    vat_number: '',
+    payment_terms: '30 days',
+    default_currency: 'EUR',
+    notes: '',
+  }
+
+  const [form, setForm] = useState(emptyForm)
+  const [editing, setEditing] = useState<ShopRecord | null>(null)
+  const [editForm, setEditForm] = useState(emptyForm)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('active')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const visibleShops = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return shops.filter((shop) => {
+      const matchesStatus = statusFilter === 'all'
+        || (statusFilter === 'active' && shop.active)
+        || (statusFilter === 'archived' && !shop.active)
+      const searchable = [
+        shop.shop_code,
+        shop.shop_name,
+        shop.contact_person,
+        shop.phone,
+        shop.email,
+        shop.city,
+        shop.postal_code,
+        shop.country,
+        shop.vat_number,
+      ].filter(Boolean).join(' ').toLowerCase()
+      return matchesStatus && (!term || searchable.includes(term))
+    })
+  }, [shops, search, statusFilter])
+
+  function validate(values: typeof emptyForm) {
+    if (!values.shop_name.trim()) return 'Shop name is required.'
+    if (values.email.trim() && !/^\S+@\S+\.\S+$/.test(values.email.trim())) return 'Enter a valid email address.'
+    return ''
+  }
+
+  function payload(values: typeof emptyForm) {
+    return {
+      shop_name: values.shop_name.trim(),
+      contact_person: values.contact_person.trim() || null,
+      phone: values.phone.trim() || null,
+      email: values.email.trim().toLowerCase() || null,
+      address_line_1: values.address_line_1.trim() || null,
+      address_line_2: values.address_line_2.trim() || null,
+      city: values.city.trim() || null,
+      postal_code: values.postal_code.trim() || null,
+      country: values.country.trim() || 'Italy',
+      vat_number: values.vat_number.trim() || null,
+      payment_terms: values.payment_terms,
+      default_currency: values.default_currency,
+      notes: values.notes.trim() || null,
+    }
+  }
+
+  async function addShop(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const validation = validate(form)
+    if (validation) {
+      setError(validation)
+      return
+    }
+
+    setBusy(true)
+    const { error: insertError } = await supabase.from('shops').insert({
+      ...payload(form),
+      active: true,
+      created_by: profile.id,
+    })
+    if (insertError) setError(insertError.message)
+    else {
+      setForm(emptyForm)
+      setMessage('Shop added successfully. Its shop code was generated automatically.')
+      onChanged()
+    }
+    setBusy(false)
+  }
+
+  function beginEdit(shop: ShopRecord) {
+    setEditing(shop)
+    setEditForm({
+      shop_name: shop.shop_name,
+      contact_person: shop.contact_person || '',
+      phone: shop.phone || '',
+      email: shop.email || '',
+      address_line_1: shop.address_line_1 || '',
+      address_line_2: shop.address_line_2 || '',
+      city: shop.city || '',
+      postal_code: shop.postal_code || '',
+      country: shop.country || 'Italy',
+      vat_number: shop.vat_number || '',
+      payment_terms: shop.payment_terms || '30 days',
+      default_currency: shop.default_currency || 'EUR',
+      notes: shop.notes || '',
+    })
+    setMessage('')
+    setError('')
+  }
+
+  async function saveShop(event: FormEvent) {
+    event.preventDefault()
+    if (!editing) return
+    setMessage('')
+    setError('')
+    const validation = validate(editForm)
+    if (validation) {
+      setError(validation)
+      return
+    }
+
+    setBusy(true)
+    const { error: updateError } = await supabase
+      .from('shops')
+      .update(payload(editForm))
+      .eq('id', editing.id)
+    if (updateError) setError(updateError.message)
+    else {
+      setEditing(null)
+      setMessage('Shop details updated successfully.')
+      onChanged()
+    }
+    setBusy(false)
+  }
+
+  async function toggleArchived(shop: ShopRecord) {
+    const action = shop.active ? 'archive' : 'restore'
+    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${shop.shop_name}?`)) return
+    setBusy(true)
+    setMessage('')
+    setError('')
+    const { error: updateError } = await supabase
+      .from('shops')
+      .update({ active: !shop.active })
+      .eq('id', shop.id)
+    if (updateError) setError(updateError.message)
+    else {
+      setMessage(shop.active ? 'Shop archived.' : 'Shop restored.')
+      onChanged()
+    }
+    setBusy(false)
+  }
+
+  const formFields = (
+    values: typeof emptyForm,
+    setValues: Dispatch<SetStateAction<typeof emptyForm>>,
+  ) => (
+    <>
+      <label>
+        Shop name
+        <input value={values.shop_name} onChange={(event) => setValues((current) => ({ ...current, shop_name: event.target.value }))} required />
+      </label>
+      <label>
+        Contact person
+        <input value={values.contact_person} onChange={(event) => setValues((current) => ({ ...current, contact_person: event.target.value }))} />
+      </label>
+      <label>
+        Phone
+        <input type="tel" value={values.phone} onChange={(event) => setValues((current) => ({ ...current, phone: event.target.value }))} />
+      </label>
+      <label>
+        Email
+        <input type="email" value={values.email} onChange={(event) => setValues((current) => ({ ...current, email: event.target.value }))} />
+      </label>
+      <label className="shop-wide-field">
+        Address line 1
+        <input value={values.address_line_1} onChange={(event) => setValues((current) => ({ ...current, address_line_1: event.target.value }))} placeholder="Street and building number" />
+      </label>
+      <label className="shop-wide-field">
+        Address line 2 (optional)
+        <input value={values.address_line_2} onChange={(event) => setValues((current) => ({ ...current, address_line_2: event.target.value }))} placeholder="Unit, floor or area" />
+      </label>
+      <label>
+        City
+        <input value={values.city} onChange={(event) => setValues((current) => ({ ...current, city: event.target.value }))} />
+      </label>
+      <label>
+        Postal code
+        <input value={values.postal_code} onChange={(event) => setValues((current) => ({ ...current, postal_code: event.target.value }))} />
+      </label>
+      <label>
+        Country
+        <input value={values.country} onChange={(event) => setValues((current) => ({ ...current, country: event.target.value }))} />
+      </label>
+      <label>
+        VAT / Tax number (optional)
+        <input value={values.vat_number} onChange={(event) => setValues((current) => ({ ...current, vat_number: event.target.value }))} />
+      </label>
+      <label>
+        Payment terms
+        <select value={values.payment_terms} onChange={(event) => setValues((current) => ({ ...current, payment_terms: event.target.value }))}>
+          <option>Cash</option>
+          <option>7 days</option>
+          <option>15 days</option>
+          <option>30 days</option>
+        </select>
+      </label>
+      <label>
+        Default currency
+        <select value={values.default_currency} onChange={(event) => setValues((current) => ({ ...current, default_currency: event.target.value }))}>
+          <option value="EUR">EUR</option>
+          <option value="LKR">LKR</option>
+        </select>
+      </label>
+      <label className="shop-wide-field">
+        Notes (optional)
+        <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} />
+      </label>
+    </>
+  )
+
+  return (
+    <div className="stacked-sections">
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">CUSTOMER DIRECTORY</p>
+            <h2>Add a shop</h2>
+            <p className="section-copy">Save customer details now so each delivery and invoice can be linked to the correct shop.</p>
+          </div>
+          <span className="gold-pill">Admin only</span>
+        </div>
+        <form className="shop-form" onSubmit={addShop}>
+          {formFields(form, setForm)}
+          <button className="primary-button shop-submit" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Add shop'}</button>
+        </form>
+        {message && <p className="success-message shop-panel-message">{message}</p>}
+        {error && <p className="error-message shop-panel-message">{error}</p>}
+      </section>
+
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">SHOPS & CUSTOMERS</p>
+            <h2>Shop directory</h2>
+            <p className="section-copy">Search, update or archive customer profiles without losing future invoice history.</p>
+          </div>
+          <span className="count-pill">{shops.filter((shop) => shop.active).length}</span>
+        </div>
+
+        <div className="shop-toolbar">
+          <label>
+            Search
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, code, city, phone…" />
+          </label>
+          <label>
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+
+        {visibleShops.length === 0 ? (
+          <div className="empty-state">No shops match this view.</div>
+        ) : (
+          <div className="shop-grid">
+            {visibleShops.map((shop) => {
+              const address = [shop.address_line_1, shop.address_line_2, shop.city, shop.postal_code, shop.country].filter(Boolean).join(', ')
+              return (
+                <article className={`shop-card ${shop.active ? '' : 'archived'}`} key={shop.id}>
+                  <div className="shop-card-heading">
+                    <div className="shop-avatar">{shop.shop_name.charAt(0).toUpperCase()}</div>
+                    <div className="shop-title-block">
+                      <span className="shop-code">{shop.shop_code}</span>
+                      <h3>{shop.shop_name}</h3>
+                    </div>
+                    <span className={`status-badge ${shop.active ? 'approved' : 'rejected'}`}>{shop.active ? 'active' : 'archived'}</span>
+                  </div>
+
+                  <div className="shop-details-grid">
+                    <div><span>Contact</span><strong>{shop.contact_person || '—'}</strong></div>
+                    <div><span>Phone</span><strong>{shop.phone || '—'}</strong></div>
+                    <div><span>Payment terms</span><strong>{shop.payment_terms}</strong></div>
+                    <div><span>Currency</span><strong>{shop.default_currency}</strong></div>
+                  </div>
+
+                  {address && <p className="shop-address">{address}</p>}
+                  {shop.email && <p className="shop-contact-line">{shop.email}</p>}
+                  {shop.vat_number && <p className="shop-contact-line">VAT / Tax: {shop.vat_number}</p>}
+                  {shop.notes && <p className="shop-notes">{shop.notes}</p>}
+
+                  <div className="shop-future-strip">
+                    <span>Invoices</span><strong>Next module</strong>
+                    <span>Payments</span><strong>Next module</strong>
+                  </div>
+
+                  <div className="shop-actions">
+                    <button className="edit-button" type="button" onClick={() => beginEdit(shop)}>Edit</button>
+                    <button className={shop.active ? 'delete-button' : 'small-button success-button'} type="button" disabled={busy} onClick={() => toggleArchived(shop)}>
+                      {shop.active ? 'Archive' : 'Restore'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {editing && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditing(null)}>
+          <section className="modal-card shop-modal" role="dialog" aria-modal="true" aria-labelledby="shop-edit-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="card-title-row">
+              <div>
+                <p className="eyebrow">CUSTOMER PROFILE</p>
+                <h2 id="shop-edit-title">Edit shop</h2>
+                <p className="section-copy">{editing.shop_code}</p>
+              </div>
+              <button className="icon-close" type="button" onClick={() => setEditing(null)} aria-label="Close">×</button>
+            </div>
+            <form className="shop-form" onSubmit={saveShop}>
+              {formFields(editForm, setEditForm)}
+              <div className="modal-actions shop-modal-actions">
+                <button className="outline-light-button" type="button" onClick={() => setEditing(null)}>Cancel</button>
+                <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save shop'}</button>
+              </div>
+            </form>
+            {error && <p className="error-message shop-panel-message">{error}</p>}
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
@@ -3008,6 +3385,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([])
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([])
   const [products, setProducts] = useState<ProductRecord[]>([])
+  const [shops, setShops] = useState<ShopRecord[]>([])
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
 
@@ -3040,6 +3418,9 @@ function Dashboard({ profile }: { profile: Profile }) {
     const productsRequest = isAdmin
       ? supabase.from('products').select('*').order('name')
       : null
+    const shopsRequest = isAdmin
+      ? supabase.from('shops').select('*').order('shop_name')
+      : null
 
     const results = await Promise.all([
       expenseRequest,
@@ -3048,6 +3429,7 @@ function Dashboard({ profile }: { profile: Profile }) {
       ...(incomeRequest ? [incomeRequest] : []),
       ...(profilesRequest ? [profilesRequest] : []),
       ...(productsRequest ? [productsRequest] : []),
+      ...(shopsRequest ? [shopsRequest] : []),
     ])
 
     let index = 0
@@ -3076,11 +3458,18 @@ function Dashboard({ profile }: { profile: Profile }) {
       setProfiles([profile])
     }
     if (productsRequest) {
-      const productsResult = results[index] as { data: ProductRecord[] | null; error: { message: string } | null }
+      const productsResult = results[index++] as { data: ProductRecord[] | null; error: { message: string } | null }
       if (productsResult.error) setDataError(productsResult.error.message)
       setProducts(productsResult.data || [])
     } else {
       setProducts([])
+    }
+    if (shopsRequest) {
+      const shopsResult = results[index] as { data: ShopRecord[] | null; error: { message: string } | null }
+      if (shopsResult.error) setDataError(shopsResult.error.message)
+      setShops(shopsResult.data || [])
+    } else {
+      setShops([])
     }
 
     setLoadingData(false)
@@ -3126,6 +3515,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'attendance', label: 'Attendance' },
         { view: 'payroll', label: 'Payroll' },
         { view: 'products', label: 'Products' },
+        { view: 'shops', label: 'Shops' },
       ]
     : [{ view: 'dashboard', label: 'Home' }]
 
@@ -3264,6 +3654,13 @@ function Dashboard({ profile }: { profile: Profile }) {
             <div className="content-card empty-state">Loading products…</div>
           ) : (
             <ProductManager profile={profile} products={products} onChanged={loadData} />
+          )
+        )}
+        {activeView === 'shops' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading shops…</div>
+          ) : (
+            <ShopManager profile={profile} shops={shops} onChanged={loadData} />
           )
         )}
         {activeView === 'payslips' && !isAdmin && (
