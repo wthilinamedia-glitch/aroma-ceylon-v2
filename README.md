@@ -51,3 +51,12 @@ Never add a Supabase secret key or service-role key to this frontend repository.
 - The only admin cannot deactivate their own account in the UI.
 - Invitation links open a password-setup screen in the app.
 - See `03_EMPLOYEES_SETUP.md` for the Edge Function and Auth URL setup.
+
+## V2.3 Employee Workspace & Attendance
+
+- Employee home hub with Submit Expense, My Expenses, My Attendance, My Payslips and My Profile.
+- Admin attendance management by employee and month.
+- Present, absent, half-day, leave, notes and clear/reset support.
+- Employee read-only monthly attendance calendar and totals.
+- Employee profile view and salary/payslip history placeholder using existing secure payroll data.
+- Employee top navigation stays uncluttered: Home is the only persistent item; module pages return through Back to my home.

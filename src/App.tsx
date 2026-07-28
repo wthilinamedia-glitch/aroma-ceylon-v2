@@ -4,7 +4,7 @@ import { supabase } from './lib/supabase'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -44,6 +44,42 @@ type ExpenseRecord = {
   reviewed_at: string | null
   rejection_reason: string | null
   created_at: string
+}
+
+type AttendanceStatus = 'present' | 'absent' | 'half_day' | 'leave'
+
+type AttendanceRecord = {
+  id: string
+  employee_id: string
+  work_date: string
+  status: AttendanceStatus
+  note: string | null
+  updated_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+type PayrollStatus = 'draft' | 'finalized' | 'paid'
+
+type PayrollRecord = {
+  id: string
+  employee_id: string
+  period_start: string
+  currency: string
+  basic_salary: number
+  bonus: number
+  allowance: number
+  deductions: number
+  advance: number
+  net_salary: number
+  working_days: number
+  present_days: number
+  absent_days: number
+  leave_days: number
+  status: PayrollStatus
+  payslip_path: string | null
+  notes: string | null
+  paid_at: string | null
 }
 
 type CompressedImage = {
@@ -110,6 +146,31 @@ function formatDate(value: string) {
     month: 'short',
     year: 'numeric',
   }).format(new Date(`${value}T12:00:00`))
+}
+
+function currentMonthValue() {
+  return localIsoDate().slice(0, 7)
+}
+
+function formatMonth(value: string) {
+  return new Intl.DateTimeFormat('en-GB', {
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${value.slice(0, 7)}-01T12:00:00`))
+}
+
+function datesForMonth(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const totalDays = new Date(year, monthNumber, 0).getDate()
+  return Array.from({ length: totalDays }, (_, index) => {
+    const day = String(index + 1).padStart(2, '0')
+    return `${month}-${day}`
+  })
+}
+
+function attendanceLabel(status: AttendanceStatus) {
+  if (status === 'half_day') return 'Half day'
+  return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 function formatBytes(bytes: number) {
@@ -1432,6 +1493,389 @@ function EmployeeManager({
   )
 }
 
+
+function EmployeeBackButton({ onBack }: { onBack: () => void }) {
+  return (
+    <button className="back-home-button" type="button" onClick={onBack}>
+      ← Back to my home
+    </button>
+  )
+}
+
+function EmployeeHome({
+  profile,
+  expenses,
+  attendance,
+  payrolls,
+  onOpen,
+}: {
+  profile: Profile
+  expenses: ExpenseRecord[]
+  attendance: AttendanceRecord[]
+  payrolls: PayrollRecord[]
+  onOpen: (view: View) => void
+}) {
+  const month = currentMonthValue()
+  const currentAttendance = attendance.filter((item) => item.work_date.startsWith(month))
+  const present = currentAttendance.filter((item) => item.status === 'present').length
+  const halfDays = currentAttendance.filter((item) => item.status === 'half_day').length
+  const pending = expenses.filter((item) => item.status === 'pending').length
+  const latestPayslip = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))[0]
+
+  const actions: { view: View; title: string; copy: string; icon: string; badge?: string }[] = [
+    { view: 'expense', title: 'Submit expense', copy: 'Add a business expense and optional bill photo.', icon: '+' },
+    { view: 'transactions', title: 'My expenses', copy: 'Track pending, approved and rejected submissions.', icon: '≡', badge: pending ? String(pending) : undefined },
+    { view: 'attendance', title: 'My attendance', copy: `This month: ${present} present, ${halfDays} half day.`, icon: '✓' },
+    { view: 'payslips', title: 'My payslips', copy: latestPayslip ? `${formatMonth(latestPayslip.period_start)} is available.` : 'Monthly salary records will appear here.', icon: '€' },
+    { view: 'profile', title: 'My profile', copy: 'View your job, contact and salary details.', icon: '◉' },
+  ]
+
+  return (
+    <>
+      <section className="welcome-panel employee-welcome-panel">
+        <p className="eyebrow">MY WORKSPACE</p>
+        <h1>Hello, {profile.full_name.trim() || 'Team Member'}</h1>
+        {profile.email && <p className="welcome-email">{profile.email}</p>}
+        <p>Your personal Aroma Ceylon workspace keeps expenses, attendance and salary information in one secure place.</p>
+      </section>
+
+      <section className="employee-summary-grid">
+        <article className="employee-summary-card">
+          <span>Pending expenses</span>
+          <strong>{pending}</strong>
+        </article>
+        <article className="employee-summary-card">
+          <span>Present this month</span>
+          <strong>{present}</strong>
+        </article>
+        <article className="employee-summary-card">
+          <span>Monthly salary</span>
+          <strong>{formatCurrency(Number(profile.monthly_salary || 0), profile.salary_currency || 'EUR')}</strong>
+        </article>
+      </section>
+
+      <section className="employee-home-grid" aria-label="Employee tools">
+        {actions.map((action) => (
+          <button className="employee-home-card" type="button" key={action.view} onClick={() => onOpen(action.view)}>
+            <span className="employee-home-icon">{action.icon}</span>
+            <span className="employee-home-copy">
+              <strong>{action.title}</strong>
+              <small>{action.copy}</small>
+            </span>
+            {action.badge && <span className="employee-home-badge">{action.badge}</span>}
+            <span className="employee-home-arrow">›</span>
+          </button>
+        ))}
+      </section>
+    </>
+  )
+}
+
+function ProfilePanel({ profile, onBack }: { profile: Profile; onBack?: () => void }) {
+  const details = [
+    ['Full name', profile.full_name || 'Not set'],
+    ['Email', profile.email || 'Not set'],
+    ['Phone', profile.phone || 'Not set'],
+    ['Job title', profile.job_title || 'Not set'],
+    ['Account status', profile.active ? 'Active' : 'Inactive'],
+    ['Monthly salary', formatCurrency(Number(profile.monthly_salary || 0), profile.salary_currency || 'EUR')],
+  ]
+
+  return (
+    <div className="stacked-sections">
+      {onBack && <EmployeeBackButton onBack={onBack} />}
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">EMPLOYEE PROFILE</p>
+            <h2>My profile</h2>
+            <p className="section-copy">Contact the administrator when any information needs to be updated.</p>
+          </div>
+          <div className="employee-avatar profile-avatar">{(profile.full_name || profile.email || 'U').charAt(0).toUpperCase()}</div>
+        </div>
+        <div className="profile-details-grid">
+          {details.map(([label, value]) => (
+            <div className="profile-detail" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function PayslipsPanel({
+  profile,
+  payrolls,
+  onBack,
+}: {
+  profile: Profile
+  payrolls: PayrollRecord[]
+  onBack?: () => void
+}) {
+  const sorted = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))
+
+  return (
+    <div className="stacked-sections">
+      {onBack && <EmployeeBackButton onBack={onBack} />}
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">SALARY HISTORY</p>
+            <h2>My payslips</h2>
+            <p className="section-copy">Finalized monthly salary records are private and visible only to you and the administrator.</p>
+          </div>
+        </div>
+
+        {sorted.length === 0 ? (
+          <div className="empty-state">
+            No finalized payslips yet. Your current monthly salary is {formatCurrency(Number(profile.monthly_salary || 0), profile.salary_currency || 'EUR')}.
+          </div>
+        ) : (
+          <div className="payslip-list">
+            {sorted.map((item) => (
+              <article className="payslip-card" key={item.id}>
+                <div>
+                  <strong>{formatMonth(item.period_start)}</strong>
+                  <p>{Number(item.present_days || 0)} present • {Number(item.absent_days || 0)} absent • {Number(item.leave_days || 0)} leave</p>
+                </div>
+                <div className="payslip-side">
+                  <strong>{formatCurrency(Number(item.net_salary || 0), item.currency || 'EUR')}</strong>
+                  <span className={`status-badge ${item.status === 'paid' ? 'approved' : 'pending'}`}>{item.status}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        <p className="module-note">PDF download will be activated when the Payroll & Payslip generator module is completed.</p>
+      </section>
+    </div>
+  )
+}
+
+function AttendancePanel({
+  profile,
+  profiles,
+  attendance,
+  onChanged,
+  onBack,
+}: {
+  profile: Profile
+  profiles: Profile[]
+  attendance: AttendanceRecord[]
+  onChanged: () => void
+  onBack?: () => void
+}) {
+  const isAdmin = profile.role === 'admin'
+  const employees = profiles.filter((item) => item.role === 'user')
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthValue())
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(
+    isAdmin ? (employees.find((item) => item.active)?.id || employees[0]?.id || '') : profile.id,
+  )
+  const [busyDate, setBusyDate] = useState('')
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setSelectedEmployeeId(profile.id)
+      return
+    }
+    if (!selectedEmployeeId && employees.length) {
+      setSelectedEmployeeId(employees.find((item) => item.active)?.id || employees[0].id)
+    }
+  }, [employees, isAdmin, profile.id, selectedEmployeeId])
+
+  const selectedEmployee = profiles.find((item) => item.id === selectedEmployeeId) || profile
+  const monthRecords = attendance.filter(
+    (item) => item.employee_id === selectedEmployeeId && item.work_date.startsWith(selectedMonth),
+  )
+  const recordByDate = new Map(monthRecords.map((item) => [item.work_date, item]))
+  const dates = datesForMonth(selectedMonth)
+  const summary = {
+    present: monthRecords.filter((item) => item.status === 'present').length,
+    absent: monthRecords.filter((item) => item.status === 'absent').length,
+    halfDay: monthRecords.filter((item) => item.status === 'half_day').length,
+    leave: monthRecords.filter((item) => item.status === 'leave').length,
+  }
+
+  async function setStatus(workDate: string, value: string) {
+    if (!isAdmin || !selectedEmployeeId) return
+    setBusyDate(workDate)
+    setMessage('')
+    const existing = recordByDate.get(workDate)
+
+    if (!value) {
+      if (existing) {
+        const { error } = await supabase.from('attendance').delete().eq('id', existing.id)
+        if (error) setMessage(error.message)
+        else {
+          setMessage(`Attendance cleared for ${formatDate(workDate)}.`)
+          onChanged()
+        }
+      }
+      setBusyDate('')
+      return
+    }
+
+    const { error } = await supabase.from('attendance').upsert(
+      {
+        employee_id: selectedEmployeeId,
+        work_date: workDate,
+        status: value as AttendanceStatus,
+        note: existing?.note || null,
+        updated_by: profile.id,
+      },
+      { onConflict: 'employee_id,work_date' },
+    )
+
+    if (error) setMessage(error.message)
+    else {
+      setMessage(`${attendanceLabel(value as AttendanceStatus)} saved for ${formatDate(workDate)}.`)
+      onChanged()
+    }
+    setBusyDate('')
+  }
+
+  async function editNote(workDate: string) {
+    if (!isAdmin || !selectedEmployeeId) return
+    const existing = recordByDate.get(workDate)
+    if (!existing) {
+      setMessage('Choose an attendance status before adding a note.')
+      return
+    }
+    const entered = window.prompt('Attendance note (optional):', existing.note || '')
+    if (entered === null) return
+
+    setBusyDate(workDate)
+    const { error } = await supabase
+      .from('attendance')
+      .update({ note: entered.trim() || null, updated_by: profile.id })
+      .eq('id', existing.id)
+
+    if (error) setMessage(error.message)
+    else {
+      setMessage(`Note updated for ${formatDate(workDate)}.`)
+      onChanged()
+    }
+    setBusyDate('')
+  }
+
+  return (
+    <div className="stacked-sections">
+      {onBack && <EmployeeBackButton onBack={onBack} />}
+      <section className="content-card">
+        <div className="card-title-row attendance-heading">
+          <div>
+            <p className="eyebrow">{isAdmin ? 'TEAM ATTENDANCE' : 'MY ATTENDANCE'}</p>
+            <h2>{isAdmin ? 'Attendance management' : 'Attendance calendar'}</h2>
+            <p className="section-copy">
+              {isAdmin ? 'Select an employee and mark each working day.' : 'Attendance is updated by your administrator.'}
+            </p>
+          </div>
+        </div>
+
+        <div className={`attendance-filters ${isAdmin ? '' : 'employee-attendance-filter'}`}>
+          {isAdmin && (
+            <label>
+              Employee
+              <select value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)}>
+                {employees.length === 0 && <option value="">No employees</option>}
+                {employees.map((employee) => (
+                  <option value={employee.id} key={employee.id}>
+                    {employee.full_name || employee.email || 'Employee'}{employee.active ? '' : ' (inactive)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            Month
+            <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+          </label>
+        </div>
+
+        <div className="attendance-person-bar">
+          <div className="employee-avatar">{(selectedEmployee.full_name || selectedEmployee.email || 'U').charAt(0).toUpperCase()}</div>
+          <div>
+            <strong>{selectedEmployee.full_name || selectedEmployee.email || 'Employee'}</strong>
+            <span>{formatMonth(selectedMonth)}</span>
+          </div>
+        </div>
+
+        <section className="attendance-summary-grid">
+          <article className="attendance-summary present"><span>Present</span><strong>{summary.present}</strong></article>
+          <article className="attendance-summary absent"><span>Absent</span><strong>{summary.absent}</strong></article>
+          <article className="attendance-summary half-day"><span>Half day</span><strong>{summary.halfDay}</strong></article>
+          <article className="attendance-summary leave"><span>Leave</span><strong>{summary.leave}</strong></article>
+        </section>
+
+        {!selectedEmployeeId ? (
+          <div className="empty-state">Create an employee before recording attendance.</div>
+        ) : isAdmin ? (
+          <div className="attendance-table-wrap">
+            <table className="attendance-table">
+              <thead>
+                <tr><th>Date</th><th>Day</th><th>Status</th><th>Note</th></tr>
+              </thead>
+              <tbody>
+                {dates.map((date) => {
+                  const record = recordByDate.get(date)
+                  const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(new Date(`${date}T12:00:00`))
+                  return (
+                    <tr key={date} className={record ? `attendance-row ${record.status}` : 'attendance-row'}>
+                      <td><strong>{date.slice(-2)}</strong><span>{formatDate(date)}</span></td>
+                      <td>{weekday}</td>
+                      <td>
+                        <select
+                          className="attendance-status-select"
+                          value={record?.status || ''}
+                          disabled={busyDate === date}
+                          onChange={(event) => setStatus(date, event.target.value)}
+                        >
+                          <option value="">Not marked</option>
+                          <option value="present">Present</option>
+                          <option value="absent">Absent</option>
+                          <option value="half_day">Half day</option>
+                          <option value="leave">Leave</option>
+                        </select>
+                      </td>
+                      <td>
+                        <button className="small-button attendance-note-button" type="button" disabled={busyDate === date} onClick={() => editNote(date)}>
+                          {record?.note ? 'Edit note' : 'Add note'}
+                        </button>
+                        {record?.note && <small className="attendance-note-preview">{record.note}</small>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="employee-calendar-grid">
+            {dates.map((date) => {
+              const record = recordByDate.get(date)
+              const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(new Date(`${date}T12:00:00`))
+              return (
+                <article className={`employee-day-card ${record?.status || 'unmarked'}`} key={date}>
+                  <span>{weekday}</span>
+                  <strong>{Number(date.slice(-2))}</strong>
+                  <small>{record ? attendanceLabel(record.status) : 'Not marked'}</small>
+                  {record?.note && <em>{record.note}</em>}
+                </article>
+              )
+            })}
+          </div>
+        )}
+
+        {message && <p className="form-message attendance-message">{message}</p>}
+      </section>
+    </div>
+  )
+}
+
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
@@ -1439,6 +1883,8 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [income, setIncome] = useState<IncomeRecord[]>([])
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([profile])
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([])
+  const [payrolls, setPayrolls] = useState<PayrollRecord[]>([])
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
 
@@ -1452,7 +1898,16 @@ function Dashboard({ profile }: { profile: Profile }) {
       .order('expense_date', { ascending: false })
       .order('created_at', { ascending: false })
 
-    const requests: PromiseLike<unknown>[] = [expenseRequest]
+    const attendanceRequest = supabase
+      .from('attendance')
+      .select('*')
+      .order('work_date', { ascending: false })
+
+    const payrollRequest = supabase
+      .from('payrolls')
+      .select('*')
+      .order('period_start', { ascending: false })
+
     const incomeRequest = isAdmin
       ? supabase.from('income').select('*').order('received_date', { ascending: false }).order('created_at', { ascending: false })
       : null
@@ -1460,15 +1915,27 @@ function Dashboard({ profile }: { profile: Profile }) {
       ? supabase.from('profiles').select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency').order('full_name')
       : null
 
-    if (incomeRequest) requests.push(incomeRequest)
-    if (profilesRequest) requests.push(profilesRequest)
+    const results = await Promise.all([
+      expenseRequest,
+      attendanceRequest,
+      payrollRequest,
+      ...(incomeRequest ? [incomeRequest] : []),
+      ...(profilesRequest ? [profilesRequest] : []),
+    ])
 
-    const results = await Promise.all(requests)
-    const expenseResult = results[0] as { data: ExpenseRecord[] | null; error: { message: string } | null }
+    let index = 0
+    const expenseResult = results[index++] as { data: ExpenseRecord[] | null; error: { message: string } | null }
+    const attendanceResult = results[index++] as { data: AttendanceRecord[] | null; error: { message: string } | null }
+    const payrollResult = results[index++] as { data: PayrollRecord[] | null; error: { message: string } | null }
+
     if (expenseResult.error) setDataError(expenseResult.error.message)
-    setExpenses(expenseResult.data || [])
+    if (attendanceResult.error) setDataError(attendanceResult.error.message)
+    if (payrollResult.error) setDataError(payrollResult.error.message)
 
-    let index = 1
+    setExpenses(expenseResult.data || [])
+    setAttendance(attendanceResult.data || [])
+    setPayrolls(payrollResult.data || [])
+
     if (incomeRequest) {
       const incomeResult = results[index++] as { data: IncomeRecord[] | null; error: { message: string } | null }
       if (incomeResult.error) setDataError(incomeResult.error.message)
@@ -1478,6 +1945,8 @@ function Dashboard({ profile }: { profile: Profile }) {
       const profilesResult = results[index] as { data: Profile[] | null; error: { message: string } | null }
       if (profilesResult.error) setDataError(profilesResult.error.message)
       setProfiles(profilesResult.data || [profile])
+    } else {
+      setProfiles([profile])
     }
 
     setLoadingData(false)
@@ -1520,12 +1989,11 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'approvals', label: 'Approvals' },
         { view: 'transactions', label: 'Transactions' },
         { view: 'employees', label: 'Employees' },
+        { view: 'attendance', label: 'Attendance' },
       ]
-    : [
-        { view: 'dashboard', label: 'Dashboard' },
-        { view: 'expense', label: 'Submit expense' },
-        { view: 'transactions', label: 'My submissions' },
-      ]
+    : [{ view: 'dashboard', label: 'Home' }]
+
+  const employeeBack = isAdmin ? undefined : () => setActiveView('dashboard')
 
   return (
     <div className="app-shell">
@@ -1540,7 +2008,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         <button className="outline-button" onClick={logout}>Sign out</button>
       </header>
 
-      <nav className="app-nav" aria-label="Main navigation">
+      <nav className={`app-nav ${isAdmin ? '' : 'employee-main-nav'}`} aria-label="Main navigation">
         {navItems.map((item) => (
           <button
             key={item.view}
@@ -1557,19 +2025,15 @@ function Dashboard({ profile }: { profile: Profile }) {
         {dataError && <div className="global-error">{dataError}</div>}
 
         {activeView === 'dashboard' && (
-          <>
-            <section className="welcome-panel">
-              <p className="eyebrow">{isAdmin ? 'ADMIN CONTROL CENTRE' : 'MY WORKSPACE'}</p>
-              <h1>Hello, {displayName}</h1>
-              {profile.email && <p className="welcome-email">{profile.email}</p>}
-              <p>
-                {isAdmin
-                  ? 'Income, approved expenses and business profit are now connected to your Supabase database.'
-                  : 'Submit business expenses and track their approval status securely.'}
-              </p>
-            </section>
+          isAdmin ? (
+            <>
+              <section className="welcome-panel">
+                <p className="eyebrow">ADMIN CONTROL CENTRE</p>
+                <h1>Hello, {displayName}</h1>
+                {profile.email && <p className="welcome-email">{profile.email}</p>}
+                <p>Income, approved expenses and business profit are connected to your secure Supabase database.</p>
+              </section>
 
-            {isAdmin ? (
               <section className="finance-grid">
                 <article className="finance-card income-card">
                   <span>Total income</span>
@@ -1592,43 +2056,38 @@ function Dashboard({ profile }: { profile: Profile }) {
                   <small>{formatLKR(totals.pendingValue)} waiting</small>
                 </article>
               </section>
+            </>
+          ) : (
+            loadingData ? (
+              <div className="content-card empty-state">Loading your workspace…</div>
             ) : (
-              <section className="finance-grid user-finance-grid">
-                <article className="finance-card pending-card">
-                  <span>Pending submissions</span>
-                  <strong>{expenses.filter((item) => item.status === 'pending').length}</strong>
-                  <small>Waiting for admin review</small>
-                </article>
-                <article className="finance-card income-card">
-                  <span>Approved</span>
-                  <strong>{expenses.filter((item) => item.status === 'approved').length}</strong>
-                  <small>Your accepted expenses</small>
-                </article>
-                <article className="finance-card expense-card">
-                  <span>Rejected</span>
-                  <strong>{expenses.filter((item) => item.status === 'rejected').length}</strong>
-                  <small>Check the reason in submissions</small>
-                </article>
-              </section>
-            )}
-
-          </>
+              <EmployeeHome profile={profile} expenses={expenses} attendance={attendance} payrolls={payrolls} onOpen={setActiveView} />
+            )
+          )
         )}
 
         {activeView === 'income' && isAdmin && <IncomeForm profile={profile} onSaved={loadData} />}
-        {activeView === 'expense' && <ExpenseForm profile={profile} onSaved={loadData} />}
+        {activeView === 'expense' && (
+          <div className="stacked-sections">
+            {employeeBack && <EmployeeBackButton onBack={employeeBack} />}
+            <ExpenseForm profile={profile} onSaved={loadData} />
+          </div>
+        )}
         {(activeView === 'approvals' || activeView === 'transactions') && (
           loadingData ? (
             <div className="content-card empty-state">Loading records…</div>
           ) : (
-            <TransactionsPanel
-              profile={profile}
-              income={activeView === 'approvals' ? [] : income}
-              expenses={activeView === 'approvals' ? expenses.filter((item) => item.status === 'pending') : expenses}
-              profileNames={profileNames}
-              onChanged={loadData}
-              mode={activeView === 'approvals' ? 'approvals' : 'transactions'}
-            />
+            <div className="stacked-sections">
+              {activeView === 'transactions' && employeeBack && <EmployeeBackButton onBack={employeeBack} />}
+              <TransactionsPanel
+                profile={profile}
+                income={activeView === 'approvals' ? [] : income}
+                expenses={activeView === 'approvals' ? expenses.filter((item) => item.status === 'pending') : expenses}
+                profileNames={profileNames}
+                onChanged={loadData}
+                mode={activeView === 'approvals' ? 'approvals' : 'transactions'}
+              />
+            </div>
           )
         )}
         {activeView === 'employees' && isAdmin && (
@@ -1638,6 +2097,27 @@ function Dashboard({ profile }: { profile: Profile }) {
             <EmployeeManager currentProfile={profile} profiles={profiles} onChanged={loadData} />
           )
         )}
+        {activeView === 'attendance' && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading attendance…</div>
+          ) : (
+            <AttendancePanel
+              profile={profile}
+              profiles={profiles}
+              attendance={attendance}
+              onChanged={loadData}
+              onBack={employeeBack}
+            />
+          )
+        )}
+        {activeView === 'payslips' && !isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading payslips…</div>
+          ) : (
+            <PayslipsPanel profile={profile} payrolls={payrolls} onBack={employeeBack} />
+          )
+        )}
+        {activeView === 'profile' && !isAdmin && <ProfilePanel profile={profile} onBack={employeeBack} />}
       </main>
     </div>
   )
