@@ -3,10 +3,12 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { jsPDF } from 'jspdf'
 import { supabase } from './lib/supabase'
+import { addPremiumPdfFooter, addPremiumPdfHeader, drawPdfSectionTitle, loadPdfLogoDataUrl, PDF_BRAND } from './lib/pdfBrand'
+import { SalesManager } from './SalesManager'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'payslips' | 'profile'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'sales' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -224,20 +226,6 @@ function safeFilePart(value: string) {
     .replace(/^_+|_+$/g, '') || 'employee'
 }
 
-function imageUrlToDataUrl(url: string) {
-  return fetch(url)
-    .then((response) => {
-      if (!response.ok) throw new Error('Unable to load the payslip logo.')
-      return response.blob()
-    })
-    .then((blob) => new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result))
-      reader.onerror = () => reject(reader.error || new Error('Unable to read the payslip logo.'))
-      reader.readAsDataURL(blob)
-    }))
-}
-
 async function createPayslipPdfBlob(
   payroll: PayrollRecord,
   employee: Profile,
@@ -247,67 +235,66 @@ async function createPayslipPdfBlob(
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const margin = 16
-  const gold: [number, number, number] = [185, 130, 24]
-  const dark: [number, number, number] = [23, 18, 14]
-  const muted: [number, number, number] = [101, 91, 81]
-  const pale: [number, number, number] = [247, 242, 232]
-
-  doc.setFillColor(...dark)
-  doc.rect(0, 0, pageWidth, 48, 'F')
+  let logo: string | null = null
 
   try {
-    const logo = await imageUrlToDataUrl('/aroma-logo.png')
-    doc.addImage(logo, 'PNG', margin, 7, 56, 34, undefined, 'FAST')
+    logo = await loadPdfLogoDataUrl()
   } catch {
-    doc.setTextColor(255, 250, 240)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(18)
-    doc.text('AROMA CEYLON', margin, 25)
+    logo = null
   }
 
-  doc.setTextColor(255, 250, 240)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(20)
-  doc.text('EMPLOYEE PAYSLIP', pageWidth - margin, 21, { align: 'right' })
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10)
-  doc.setTextColor(225, 205, 158)
-  doc.text(formatMonth(payroll.period_start), pageWidth - margin, 29, { align: 'right' })
-  doc.text(`Status: ${payroll.status.toUpperCase()}`, pageWidth - margin, 36, { align: 'right' })
-
-  let y = 60
-  doc.setTextColor(...dark)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.text('Employee details', margin, y)
-  doc.setDrawColor(...gold)
-  doc.setLineWidth(0.6)
-  doc.line(margin, y + 3, pageWidth - margin, y + 3)
-  y += 12
-
-  const detailRows = [
-    ['Employee', employee.full_name || employee.email || 'Team member'],
-    ['Job title', employee.job_title || 'Not set'],
-    ['Email', employee.email || 'Not set'],
-    ['Pay period', formatMonth(payroll.period_start)],
-  ]
-  doc.setFontSize(10)
-  detailRows.forEach(([label, value], index) => {
-    const rowY = y + index * 8
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(...muted)
-    doc.text(label, margin, rowY)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...dark)
-    doc.text(String(value), margin + 42, rowY)
+  let y = addPremiumPdfHeader(doc, {
+    title: 'EMPLOYEE PAYSLIP',
+    subtitle: formatMonth(payroll.period_start),
+    status: payroll.status,
+    logoDataUrl: logo,
   })
-  y += detailRows.length * 8 + 8
 
-  doc.setFillColor(...pale)
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 31, 3, 3, 'F')
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...dark)
-  doc.text('Attendance summary', margin + 6, y + 8)
+  const cardWidth = pageWidth - margin * 2
+  doc.setFillColor(...PDF_BRAND.cream)
+  doc.setDrawColor(...PDF_BRAND.line)
+  doc.setLineWidth(0.35)
+  doc.roundedRect(margin, y, cardWidth, 34, 2.5, 2.5, 'FD')
+
+  const detailColumns = [
+    {
+      x: margin + 7,
+      rows: [
+        ['Employee', employee.full_name || employee.email || 'Team member'],
+        ['Email', employee.email || 'Not set'],
+      ],
+    },
+    {
+      x: pageWidth / 2 + 4,
+      rows: [
+        ['Job title', employee.job_title || 'Not set'],
+        ['Pay period', formatMonth(payroll.period_start)],
+      ],
+    },
+  ]
+
+  detailColumns.forEach((column) => {
+    column.rows.forEach(([label, value], index) => {
+      const rowY = y + 10 + index * 13
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7.5)
+      doc.setTextColor(...PDF_BRAND.muted)
+      doc.text(label.toUpperCase(), column.x, rowY)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10)
+      doc.setTextColor(...PDF_BRAND.ink)
+      const safeValue = doc.splitTextToSize(String(value), 72)[0] || 'Not set'
+      doc.text(safeValue, column.x, rowY + 5)
+    })
+  })
+  y += 44
+
+  drawPdfSectionTitle(doc, 'Attendance summary', y)
+  y += 8
+  doc.setFillColor(...PDF_BRAND.white)
+  doc.setDrawColor(...PDF_BRAND.line)
+  doc.roundedRect(margin, y, cardWidth, 31, 2.5, 2.5, 'FD')
+
   const attendanceItems = [
     ['Working days', payroll.working_days],
     ['Present', payroll.present_days],
@@ -315,93 +302,128 @@ async function createPayslipPdfBlob(
     ['Absent', payroll.absent_days],
     ['Leave', payroll.leave_days],
   ]
-  const columnWidth = (pageWidth - margin * 2 - 12) / attendanceItems.length
+  const attendanceColumnWidth = cardWidth / attendanceItems.length
   attendanceItems.forEach(([label, value], index) => {
-    const x = margin + 6 + index * columnWidth
+    const centerX = margin + attendanceColumnWidth * index + attendanceColumnWidth / 2
+    if (index > 0) {
+      doc.setDrawColor(...PDF_BRAND.line)
+      doc.setLineWidth(0.25)
+      doc.line(margin + attendanceColumnWidth * index, y + 6, margin + attendanceColumnWidth * index, y + 25)
+    }
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.setTextColor(...muted)
-    doc.text(String(label), x, y + 17)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(12)
-    doc.setTextColor(...dark)
-    doc.text(String(value), x, y + 25)
+    doc.setFontSize(7.5)
+    doc.setTextColor(...PDF_BRAND.muted)
+    doc.text(String(label), centerX, y + 10, { align: 'center' })
+    doc.setFont('times', 'bold')
+    doc.setFontSize(15)
+    doc.setTextColor(...PDF_BRAND.ink)
+    doc.text(String(value), centerX, y + 22, { align: 'center' })
   })
   y += 43
 
+  const gap = 8
+  const blockWidth = (cardWidth - gap) / 2
+  const rightX = margin + blockWidth + gap
+  drawPdfSectionTitle(doc, 'Earnings', y, margin, blockWidth)
+  drawPdfSectionTitle(doc, 'Deductions', y, rightX, blockWidth)
+  y += 8
+
+  function drawMoneyCard(
+    x: number,
+    rows: Array<[string, number, boolean?]>,
+    totalLabel: string,
+    total: number,
+  ) {
+    doc.setFillColor(...PDF_BRAND.white)
+    doc.setDrawColor(...PDF_BRAND.line)
+    doc.roundedRect(x, y, blockWidth, 45, 2.5, 2.5, 'FD')
+
+    rows.forEach(([label, amount, negative], index) => {
+      const rowY = y + 10 + index * 9
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8.5)
+      doc.setTextColor(...PDF_BRAND.muted)
+      doc.text(label, x + 6, rowY)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...PDF_BRAND.ink)
+      const prefix = negative && amount ? '-' : ''
+      doc.text(`${prefix}${formatCurrency(amount, payroll.currency)}`, x + blockWidth - 6, rowY, { align: 'right' })
+    })
+
+    doc.setDrawColor(...PDF_BRAND.line)
+    doc.line(x + 6, y + 32, x + blockWidth - 6, y + 32)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...PDF_BRAND.darkGold)
+    doc.text(totalLabel, x + 6, y + 40)
+    doc.text(formatCurrency(total, payroll.currency), x + blockWidth - 6, y + 40, { align: 'right' })
+  }
+
   const gross = Number(payroll.basic_salary) + Number(payroll.bonus) + Number(payroll.allowance)
   const totalDeductions = Number(payroll.deductions) + Number(payroll.advance)
-  const leftX = margin
-  const rightX = pageWidth / 2 + 4
-  const blockWidth = pageWidth / 2 - margin - 8
+  drawMoneyCard(
+    margin,
+    [
+      ['Basic salary', Number(payroll.basic_salary)],
+      ['Bonus', Number(payroll.bonus)],
+      ['Allowance', Number(payroll.allowance)],
+    ],
+    'Gross earnings',
+    gross,
+  )
+  drawMoneyCard(
+    rightX,
+    [
+      ['Other deductions', Number(payroll.deductions), true],
+      ['Salary advance', Number(payroll.advance), true],
+      ['Other', 0, true],
+    ],
+    'Total deductions',
+    totalDeductions,
+  )
+  y += 56
 
-  function moneyRow(label: string, amount: number, x: number, rowY: number, negative = false) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
-    doc.setTextColor(...muted)
-    doc.text(label, x, rowY)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...dark)
-    doc.text(`${negative && amount ? '-' : ''}${formatCurrency(amount, payroll.currency)}`, x + blockWidth, rowY, { align: 'right' })
-  }
-
+  doc.setFillColor(...PDF_BRAND.paleGold)
+  doc.setDrawColor(...PDF_BRAND.gold)
+  doc.setLineWidth(0.6)
+  doc.roundedRect(margin, y, cardWidth, 29, 3, 3, 'FD')
+  doc.setTextColor(...PDF_BRAND.darkGold)
   doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...dark)
-  doc.setFontSize(13)
-  doc.text('Earnings', leftX, y)
-  doc.text('Deductions', rightX, y)
-  doc.setDrawColor(218, 208, 192)
-  doc.line(leftX, y + 3, leftX + blockWidth, y + 3)
-  doc.line(rightX, y + 3, rightX + blockWidth, y + 3)
-  moneyRow('Basic salary', Number(payroll.basic_salary), leftX, y + 13)
-  moneyRow('Bonus', Number(payroll.bonus), leftX, y + 22)
-  moneyRow('Allowance', Number(payroll.allowance), leftX, y + 31)
-  moneyRow('Other deductions', Number(payroll.deductions), rightX, y + 13, true)
-  moneyRow('Salary advance', Number(payroll.advance), rightX, y + 22, true)
-  y += 44
-
-  doc.setFillColor(...dark)
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 28, 3, 3, 'F')
-  doc.setTextColor(225, 205, 158)
-  doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
-  doc.text(`Gross earnings: ${formatCurrency(gross, payroll.currency)}`, margin + 7, y + 9)
-  doc.text(`Total deductions: ${formatCurrency(totalDeductions, payroll.currency)}`, margin + 7, y + 17)
-  doc.setTextColor(255, 250, 240)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(16)
-  doc.text('NET SALARY', pageWidth - margin - 7, y + 10, { align: 'right' })
-  doc.setTextColor(225, 180, 82)
-  doc.setFontSize(19)
-  doc.text(formatCurrency(Number(payroll.net_salary), payroll.currency), pageWidth - margin - 7, y + 21, { align: 'right' })
-  y += 41
+  doc.text('NET SALARY', margin + 8, y + 10)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(21)
+  doc.setTextColor(...PDF_BRAND.ink)
+  doc.text(formatCurrency(Number(payroll.net_salary), payroll.currency), pageWidth - margin - 8, y + 19, { align: 'right' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...PDF_BRAND.muted)
+  doc.text(`Gross ${formatCurrency(gross, payroll.currency)} | Deductions ${formatCurrency(totalDeductions, payroll.currency)}`, margin + 8, y + 20)
+  y += 40
 
   if (payroll.notes) {
-    doc.setTextColor(...dark)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
-    doc.text('Notes', margin, y)
+    doc.setFontSize(8)
+    doc.setTextColor(...PDF_BRAND.darkGold)
+    doc.text('PAYROLL NOTE', margin, y)
     doc.setFont('helvetica', 'normal')
-    doc.setTextColor(...muted)
-    doc.setFontSize(9)
-    const lines = doc.splitTextToSize(payroll.notes, pageWidth - margin * 2)
-    doc.text(lines, margin, y + 7)
-    y += Math.min(28, lines.length * 5 + 10)
+    doc.setFontSize(8)
+    doc.setTextColor(...PDF_BRAND.muted)
+    const noteLines = doc.splitTextToSize(payroll.notes, cardWidth).slice(0, 3)
+    doc.text(noteLines, margin, y + 6)
   }
 
-  doc.setDrawColor(218, 208, 192)
-  doc.line(margin, pageHeight - 31, pageWidth - margin, pageHeight - 31)
-  doc.setTextColor(...muted)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
-  doc.text(`Authorized by: ${authorizedBy || 'Aroma Ceylon Administrator'}`, margin, pageHeight - 22)
-  doc.text(`Generated: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`, margin, pageHeight - 16)
-  if (payroll.paid_at) {
-    doc.text(`Paid: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(payroll.paid_at))}`, pageWidth - margin, pageHeight - 22, { align: 'right' })
-  }
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...gold)
-  doc.text('Aroma Ceylon • Authentic Ceylon Spices', pageWidth - margin, pageHeight - 16, { align: 'right' })
+  addPremiumPdfFooter(doc, {
+    leftTop: `Authorized by: ${authorizedBy || 'Aroma Ceylon Administrator'}`,
+    leftBottom: `Generated: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`,
+    rightTop: payroll.paid_at
+      ? `Paid: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(payroll.paid_at))}`
+      : `Status: ${payroll.status.toUpperCase()}`,
+  })
+
+  // Keep a clean white page through the footer and avoid accidental overflow.
+  doc.setDrawColor(...PDF_BRAND.white)
+  doc.line(0, pageHeight - 1, pageWidth, pageHeight - 1)
 
   return doc.output('blob')
 }
@@ -3516,6 +3538,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'payroll', label: 'Payroll' },
         { view: 'products', label: 'Products' },
         { view: 'shops', label: 'Shops' },
+        { view: 'sales', label: 'Sales' },
       ]
     : [{ view: 'dashboard', label: 'Home' }]
 
@@ -3661,6 +3684,13 @@ function Dashboard({ profile }: { profile: Profile }) {
             <div className="content-card empty-state">Loading shops…</div>
           ) : (
             <ShopManager profile={profile} shops={shops} onChanged={loadData} />
+          )
+        )}
+        {activeView === 'sales' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading sales workspace…</div>
+          ) : (
+            <SalesManager profile={profile} shops={shops} products={products} />
           )
         )}
         {activeView === 'payslips' && !isAdmin && (

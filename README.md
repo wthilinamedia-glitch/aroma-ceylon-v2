@@ -83,3 +83,13 @@ Run `06_PAYROLL_PAYSLIPS_SETUP.sql` before deploying this update. The Payroll ta
 ## Shops / customer directory
 
 Run `07_SHOPS_SETUP.sql` before using the Shops tab. Shop codes are generated automatically and archived shops remain available for future invoice history.
+
+
+## Premium PDF design
+
+Payslips now use the white + gold premium classic template. The shared PDF branding helpers are ready for the upcoming invoice generator. See `08_PREMIUM_PDF_DESIGN.md`.
+
+## V2.8 Sales, deliveries & invoices
+
+Run `09_SALES_DELIVERIES_INVOICES_SETUP.sql` in Supabase before opening the Sales tab. The module includes draft invoices, premium invoice and delivery-note PDFs, delivery status, payments, balances, overdue tracking and private document storage.
+
