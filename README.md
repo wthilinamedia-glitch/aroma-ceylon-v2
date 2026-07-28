@@ -73,3 +73,8 @@ Never add a Supabase secret key or service-role key to this frontend repository.
 - Database audit history
 
 Run `05_PRODUCTS_SETUP.sql` before deploying this version.
+
+
+## V2.5 Payroll & Payslips
+
+Run `06_PAYROLL_PAYSLIPS_SETUP.sql` before deploying this update. The Payroll tab lets the administrator prepare drafts, finalize payroll, create a branded private PDF, mark salary paid, and allow each employee to download only their own finalized payslip.

@@ -1,11 +1,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import { jsPDF } from 'jspdf'
 import { supabase } from './lib/supabase'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'products' | 'payslips' | 'profile'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -75,12 +76,18 @@ type PayrollRecord = {
   net_salary: number
   working_days: number
   present_days: number
+  half_day_days: number
   absent_days: number
   leave_days: number
   status: PayrollStatus
   payslip_path: string | null
   notes: string | null
+  created_by: string
+  finalized_by: string | null
+  finalized_at: string | null
   paid_at: string | null
+  created_at?: string
+  updated_at?: string
 }
 
 type ProductRecord = {
@@ -184,6 +191,214 @@ function formatMonth(value: string) {
     month: 'long',
     year: 'numeric',
   }).format(new Date(`${value.slice(0, 7)}-01T12:00:00`))
+}
+
+
+function safeFilePart(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'employee'
+}
+
+function imageUrlToDataUrl(url: string) {
+  return fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error('Unable to load the payslip logo.')
+      return response.blob()
+    })
+    .then((blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error || new Error('Unable to read the payslip logo.'))
+      reader.readAsDataURL(blob)
+    }))
+}
+
+async function createPayslipPdfBlob(
+  payroll: PayrollRecord,
+  employee: Profile,
+  authorizedBy: string,
+) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 16
+  const gold: [number, number, number] = [185, 130, 24]
+  const dark: [number, number, number] = [23, 18, 14]
+  const muted: [number, number, number] = [101, 91, 81]
+  const pale: [number, number, number] = [247, 242, 232]
+
+  doc.setFillColor(...dark)
+  doc.rect(0, 0, pageWidth, 48, 'F')
+
+  try {
+    const logo = await imageUrlToDataUrl('/aroma-logo.png')
+    doc.addImage(logo, 'PNG', margin, 7, 56, 34, undefined, 'FAST')
+  } catch {
+    doc.setTextColor(255, 250, 240)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(18)
+    doc.text('AROMA CEYLON', margin, 25)
+  }
+
+  doc.setTextColor(255, 250, 240)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(20)
+  doc.text('EMPLOYEE PAYSLIP', pageWidth - margin, 21, { align: 'right' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(225, 205, 158)
+  doc.text(formatMonth(payroll.period_start), pageWidth - margin, 29, { align: 'right' })
+  doc.text(`Status: ${payroll.status.toUpperCase()}`, pageWidth - margin, 36, { align: 'right' })
+
+  let y = 60
+  doc.setTextColor(...dark)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.text('Employee details', margin, y)
+  doc.setDrawColor(...gold)
+  doc.setLineWidth(0.6)
+  doc.line(margin, y + 3, pageWidth - margin, y + 3)
+  y += 12
+
+  const detailRows = [
+    ['Employee', employee.full_name || employee.email || 'Team member'],
+    ['Job title', employee.job_title || 'Not set'],
+    ['Email', employee.email || 'Not set'],
+    ['Pay period', formatMonth(payroll.period_start)],
+  ]
+  doc.setFontSize(10)
+  detailRows.forEach(([label, value], index) => {
+    const rowY = y + index * 8
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...muted)
+    doc.text(label, margin, rowY)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...dark)
+    doc.text(String(value), margin + 42, rowY)
+  })
+  y += detailRows.length * 8 + 8
+
+  doc.setFillColor(...pale)
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 31, 3, 3, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...dark)
+  doc.text('Attendance summary', margin + 6, y + 8)
+  const attendanceItems = [
+    ['Working days', payroll.working_days],
+    ['Present', payroll.present_days],
+    ['Half days', payroll.half_day_days],
+    ['Absent', payroll.absent_days],
+    ['Leave', payroll.leave_days],
+  ]
+  const columnWidth = (pageWidth - margin * 2 - 12) / attendanceItems.length
+  attendanceItems.forEach(([label, value], index) => {
+    const x = margin + 6 + index * columnWidth
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...muted)
+    doc.text(String(label), x, y + 17)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.setTextColor(...dark)
+    doc.text(String(value), x, y + 25)
+  })
+  y += 43
+
+  const gross = Number(payroll.basic_salary) + Number(payroll.bonus) + Number(payroll.allowance)
+  const totalDeductions = Number(payroll.deductions) + Number(payroll.advance)
+  const leftX = margin
+  const rightX = pageWidth / 2 + 4
+  const blockWidth = pageWidth / 2 - margin - 8
+
+  function moneyRow(label: string, amount: number, x: number, rowY: number, negative = false) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(...muted)
+    doc.text(label, x, rowY)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...dark)
+    doc.text(`${negative && amount ? '-' : ''}${formatCurrency(amount, payroll.currency)}`, x + blockWidth, rowY, { align: 'right' })
+  }
+
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...dark)
+  doc.setFontSize(13)
+  doc.text('Earnings', leftX, y)
+  doc.text('Deductions', rightX, y)
+  doc.setDrawColor(218, 208, 192)
+  doc.line(leftX, y + 3, leftX + blockWidth, y + 3)
+  doc.line(rightX, y + 3, rightX + blockWidth, y + 3)
+  moneyRow('Basic salary', Number(payroll.basic_salary), leftX, y + 13)
+  moneyRow('Bonus', Number(payroll.bonus), leftX, y + 22)
+  moneyRow('Allowance', Number(payroll.allowance), leftX, y + 31)
+  moneyRow('Other deductions', Number(payroll.deductions), rightX, y + 13, true)
+  moneyRow('Salary advance', Number(payroll.advance), rightX, y + 22, true)
+  y += 44
+
+  doc.setFillColor(...dark)
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 28, 3, 3, 'F')
+  doc.setTextColor(225, 205, 158)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.text(`Gross earnings: ${formatCurrency(gross, payroll.currency)}`, margin + 7, y + 9)
+  doc.text(`Total deductions: ${formatCurrency(totalDeductions, payroll.currency)}`, margin + 7, y + 17)
+  doc.setTextColor(255, 250, 240)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.text('NET SALARY', pageWidth - margin - 7, y + 10, { align: 'right' })
+  doc.setTextColor(225, 180, 82)
+  doc.setFontSize(19)
+  doc.text(formatCurrency(Number(payroll.net_salary), payroll.currency), pageWidth - margin - 7, y + 21, { align: 'right' })
+  y += 41
+
+  if (payroll.notes) {
+    doc.setTextColor(...dark)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.text('Notes', margin, y)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...muted)
+    doc.setFontSize(9)
+    const lines = doc.splitTextToSize(payroll.notes, pageWidth - margin * 2)
+    doc.text(lines, margin, y + 7)
+    y += Math.min(28, lines.length * 5 + 10)
+  }
+
+  doc.setDrawColor(218, 208, 192)
+  doc.line(margin, pageHeight - 31, pageWidth - margin, pageHeight - 31)
+  doc.setTextColor(...muted)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  doc.text(`Authorized by: ${authorizedBy || 'Aroma Ceylon Administrator'}`, margin, pageHeight - 22)
+  doc.text(`Generated: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`, margin, pageHeight - 16)
+  if (payroll.paid_at) {
+    doc.text(`Paid: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(payroll.paid_at))}`, pageWidth - margin, pageHeight - 22, { align: 'right' })
+  }
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...gold)
+  doc.text('Aroma Ceylon • Authentic Ceylon Spices', pageWidth - margin, pageHeight - 16, { align: 'right' })
+
+  return doc.output('blob')
+}
+
+async function downloadPrivatePayslip(payroll: PayrollRecord, employeeName: string) {
+  if (!payroll.payslip_path) throw new Error('This payslip PDF is not available yet.')
+
+  const fileName = `Aroma_Ceylon_Payslip_${safeFilePart(employeeName)}_${payroll.period_start.slice(0, 7)}.pdf`
+  const { data, error } = await supabase.storage
+    .from('payslips')
+    .createSignedUrl(payroll.payslip_path, 120, { download: fileName })
+
+  if (error) throw error
+  const link = document.createElement('a')
+  link.href = data.signedUrl
+  link.download = fileName
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }
 
 function datesForMonth(month: string) {
@@ -1642,7 +1857,23 @@ function PayslipsPanel({
   payrolls: PayrollRecord[]
   onBack?: () => void
 }) {
-  const sorted = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))
+  const sorted = [...payrolls]
+    .filter((item) => item.status === 'finalized' || item.status === 'paid')
+    .sort((a, b) => b.period_start.localeCompare(a.period_start))
+  const [downloadingId, setDownloadingId] = useState('')
+  const [error, setError] = useState('')
+
+  async function download(item: PayrollRecord) {
+    setDownloadingId(item.id)
+    setError('')
+    try {
+      await downloadPrivatePayslip(item, profile.full_name || profile.email || 'Employee')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to download the payslip.')
+    } finally {
+      setDownloadingId('')
+    }
+  }
 
   return (
     <div className="stacked-sections">
@@ -1652,9 +1883,11 @@ function PayslipsPanel({
           <div>
             <p className="eyebrow">SALARY HISTORY</p>
             <h2>My payslips</h2>
-            <p className="section-copy">Finalized monthly salary records are private and visible only to you and the administrator.</p>
+            <p className="section-copy">Finalized salary records and private PDF payslips are visible only to you and the administrator.</p>
           </div>
         </div>
+
+        {error && <p className="error-message panel-message">{error}</p>}
 
         {sorted.length === 0 ? (
           <div className="empty-state">
@@ -1663,20 +1896,487 @@ function PayslipsPanel({
         ) : (
           <div className="payslip-list">
             {sorted.map((item) => (
-              <article className="payslip-card" key={item.id}>
+              <article className="payslip-card employee-payslip-card" key={item.id}>
                 <div>
                   <strong>{formatMonth(item.period_start)}</strong>
-                  <p>{Number(item.present_days || 0)} present • {Number(item.absent_days || 0)} absent • {Number(item.leave_days || 0)} leave</p>
+                  <p>
+                    {Number(item.present_days || 0)} present • {Number(item.half_day_days || 0)} half day • {Number(item.absent_days || 0)} absent • {Number(item.leave_days || 0)} leave
+                  </p>
                 </div>
                 <div className="payslip-side">
                   <strong>{formatCurrency(Number(item.net_salary || 0), item.currency || 'EUR')}</strong>
                   <span className={`status-badge ${item.status === 'paid' ? 'approved' : 'pending'}`}>{item.status}</span>
+                  <button
+                    className="small-button payslip-download-button"
+                    type="button"
+                    disabled={!item.payslip_path || downloadingId === item.id}
+                    onClick={() => download(item)}
+                  >
+                    {downloadingId === item.id ? 'Preparing…' : 'Download PDF'}
+                  </button>
                 </div>
               </article>
             ))}
           </div>
         )}
-        <p className="module-note">PDF download will be activated when the Payroll & Payslip generator module is completed.</p>
+      </section>
+    </div>
+  )
+}
+
+function PayrollManager({
+  profile,
+  profiles,
+  attendance,
+  payrolls,
+  onChanged,
+}: {
+  profile: Profile
+  profiles: Profile[]
+  attendance: AttendanceRecord[]
+  payrolls: PayrollRecord[]
+  onChanged: () => void
+}) {
+  const employees = profiles.filter((item) => item.role === 'user')
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(
+    employees.find((item) => item.active)?.id || employees[0]?.id || '',
+  )
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthValue())
+  const [values, setValues] = useState({
+    basic_salary: '0',
+    bonus: '0',
+    allowance: '0',
+    deductions: '0',
+    advance: '0',
+    notes: '',
+  })
+  const [busy, setBusy] = useState(false)
+  const [downloadingId, setDownloadingId] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const selectedEmployee = employees.find((item) => item.id === selectedEmployeeId) || null
+  const periodStart = `${selectedMonth}-01`
+  const selectedPayroll = payrolls.find(
+    (item) => item.employee_id === selectedEmployeeId && item.period_start === periodStart,
+  ) || null
+
+  const attendanceSummary = useMemo(() => {
+    const records = attendance.filter(
+      (item) => item.employee_id === selectedEmployeeId && item.work_date.startsWith(selectedMonth),
+    )
+    const present = records.filter((item) => item.status === 'present').length
+    const halfDays = records.filter((item) => item.status === 'half_day').length
+    const absent = records.filter((item) => item.status === 'absent').length
+    const leave = records.filter((item) => item.status === 'leave').length
+    return {
+      workingDays: present + halfDays + absent + leave,
+      present,
+      halfDays,
+      absent,
+      leave,
+    }
+  }, [attendance, selectedEmployeeId, selectedMonth])
+
+  useEffect(() => {
+    if (!selectedEmployeeId && employees.length) {
+      setSelectedEmployeeId(employees.find((item) => item.active)?.id || employees[0].id)
+    }
+  }, [employees, selectedEmployeeId])
+
+  useEffect(() => {
+    setMessage('')
+    setError('')
+    if (selectedPayroll) {
+      setValues({
+        basic_salary: String(Number(selectedPayroll.basic_salary || 0)),
+        bonus: String(Number(selectedPayroll.bonus || 0)),
+        allowance: String(Number(selectedPayroll.allowance || 0)),
+        deductions: String(Number(selectedPayroll.deductions || 0)),
+        advance: String(Number(selectedPayroll.advance || 0)),
+        notes: selectedPayroll.notes || '',
+      })
+    } else {
+      setValues({
+        basic_salary: String(Number(selectedEmployee?.monthly_salary || 0)),
+        bonus: '0',
+        allowance: '0',
+        deductions: '0',
+        advance: '0',
+        notes: '',
+      })
+    }
+  }, [selectedEmployee, selectedPayroll])
+
+  const basic = Number(values.basic_salary || 0)
+  const bonus = Number(values.bonus || 0)
+  const allowance = Number(values.allowance || 0)
+  const deductions = Number(values.deductions || 0)
+  const advance = Number(values.advance || 0)
+  const gross = basic + bonus + allowance
+  const net = gross - deductions - advance
+  const currency = selectedPayroll?.currency || selectedEmployee?.salary_currency || 'EUR'
+  const locked = selectedPayroll?.status === 'finalized' || selectedPayroll?.status === 'paid'
+
+  function payrollPayload() {
+    if (!selectedEmployee) throw new Error('Choose an employee first.')
+    if ([basic, bonus, allowance, deductions, advance].some((amount) => !Number.isFinite(amount) || amount < 0)) {
+      throw new Error('Salary amounts must be valid positive numbers or zero.')
+    }
+    if (net < 0) throw new Error('Net salary cannot be below zero.')
+
+    return {
+      employee_id: selectedEmployee.id,
+      period_start: periodStart,
+      currency: selectedEmployee.salary_currency || 'EUR',
+      basic_salary: basic,
+      bonus,
+      allowance,
+      deductions,
+      advance,
+      working_days: attendanceSummary.workingDays,
+      present_days: attendanceSummary.present,
+      half_day_days: attendanceSummary.halfDays,
+      absent_days: attendanceSummary.absent,
+      leave_days: attendanceSummary.leave,
+      notes: values.notes.trim() || null,
+      created_by: profile.id,
+    }
+  }
+
+  async function saveDraft() {
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      const payload = payrollPayload()
+      const { error: saveError } = await supabase
+        .from('payrolls')
+        .upsert(
+          {
+            ...payload,
+            status: 'draft',
+            payslip_path: null,
+            finalized_by: null,
+            finalized_at: null,
+            paid_at: null,
+          },
+          { onConflict: 'employee_id,period_start' },
+        )
+      if (saveError) throw saveError
+      setMessage('Payroll draft saved.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to save payroll.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function finalizePayroll() {
+    if (!selectedEmployee) return
+    if (!window.confirm(`Finalize ${formatMonth(periodStart)} payroll for ${selectedEmployee.full_name || selectedEmployee.email}?`)) return
+
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      const payload = payrollPayload()
+      const finalizedAt = new Date().toISOString()
+      const { data: draft, error: draftError } = await supabase
+        .from('payrolls')
+        .upsert(
+          {
+            ...payload,
+            status: 'draft',
+            payslip_path: null,
+            finalized_by: null,
+            finalized_at: null,
+            paid_at: null,
+          },
+          { onConflict: 'employee_id,period_start' },
+        )
+        .select('*')
+        .single()
+      if (draftError) throw draftError
+
+      const finalRecord = {
+        ...(draft as PayrollRecord),
+        status: 'finalized' as PayrollStatus,
+        finalized_by: profile.id,
+        finalized_at: finalizedAt,
+        paid_at: null,
+      }
+      const pdfBlob = await createPayslipPdfBlob(finalRecord, selectedEmployee, profile.full_name || profile.email || 'Administrator')
+      const pdfPath = `${selectedEmployee.id}/${periodStart}.pdf`
+      const { error: uploadError } = await supabase.storage
+        .from('payslips')
+        .upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true })
+      if (uploadError) throw uploadError
+
+      const { error: finalizeError } = await supabase
+        .from('payrolls')
+        .update({
+          status: 'finalized',
+          payslip_path: pdfPath,
+          finalized_by: profile.id,
+          finalized_at: finalizedAt,
+          paid_at: null,
+        })
+        .eq('id', draft.id)
+      if (finalizeError) throw finalizeError
+
+      setMessage('Payroll finalized and PDF payslip created.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to finalize payroll.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function markPaid() {
+    if (!selectedEmployee || !selectedPayroll) return
+    if (!window.confirm(`Mark ${formatMonth(selectedPayroll.period_start)} salary as paid?`)) return
+
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      const paidAt = new Date().toISOString()
+      const paidRecord = { ...selectedPayroll, status: 'paid' as PayrollStatus, paid_at: paidAt }
+      const pdfBlob = await createPayslipPdfBlob(paidRecord, selectedEmployee, profile.full_name || profile.email || 'Administrator')
+      const pdfPath = selectedPayroll.payslip_path || `${selectedEmployee.id}/${periodStart}.pdf`
+      const { error: uploadError } = await supabase.storage
+        .from('payslips')
+        .upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true })
+      if (uploadError) throw uploadError
+
+      const { error: updateError } = await supabase
+        .from('payrolls')
+        .update({ status: 'paid', paid_at: paidAt, payslip_path: pdfPath })
+        .eq('id', selectedPayroll.id)
+      if (updateError) throw updateError
+
+      setMessage('Salary marked as paid and the PDF was refreshed.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to mark salary as paid.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reopenDraft() {
+    if (!selectedPayroll) return
+    if (!window.confirm('Reopen this payroll as a draft? The current PDF will be removed until you finalize it again.')) return
+
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      if (selectedPayroll.payslip_path) {
+        const { error: removeError } = await supabase.storage.from('payslips').remove([selectedPayroll.payslip_path])
+        if (removeError) throw removeError
+      }
+      const { error: updateError } = await supabase
+        .from('payrolls')
+        .update({
+          status: 'draft',
+          payslip_path: null,
+          finalized_by: null,
+          finalized_at: null,
+          paid_at: null,
+        })
+        .eq('id', selectedPayroll.id)
+      if (updateError) throw updateError
+      setMessage('Payroll reopened as a draft.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to reopen payroll.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteDraft() {
+    if (!selectedPayroll || selectedPayroll.status !== 'draft') return
+    if (!window.confirm('Delete this payroll draft?')) return
+
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      const { error: deleteError } = await supabase.from('payrolls').delete().eq('id', selectedPayroll.id)
+      if (deleteError) throw deleteError
+      setMessage('Payroll draft deleted.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to delete payroll draft.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function download(item: PayrollRecord, employee: Profile) {
+    setDownloadingId(item.id)
+    setError('')
+    try {
+      await downloadPrivatePayslip(item, employee.full_name || employee.email || 'Employee')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to download payslip.')
+    } finally {
+      setDownloadingId('')
+    }
+  }
+
+  const history = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))
+
+  return (
+    <div className="stacked-sections">
+      <section className="content-card payroll-control-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">PAYROLL CONTROL</p>
+            <h2>Salary & payslips</h2>
+            <p className="section-copy">Prepare monthly salary, use attendance totals and create a private branded PDF payslip.</p>
+          </div>
+          {selectedPayroll && <span className={`status-badge ${selectedPayroll.status === 'paid' ? 'approved' : selectedPayroll.status === 'finalized' ? 'pending' : ''}`}>{selectedPayroll.status}</span>}
+        </div>
+
+        {employees.length === 0 ? (
+          <div className="empty-state">Invite an employee before preparing payroll.</div>
+        ) : (
+          <>
+            <div className="payroll-selectors">
+              <label>
+                Employee
+                <select value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)}>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>{employee.full_name || employee.email}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Salary month
+                <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+              </label>
+              <div className="payroll-profile-rate">
+                <span>Profile salary</span>
+                <strong>{selectedEmployee ? formatCurrency(Number(selectedEmployee.monthly_salary || 0), selectedEmployee.salary_currency || 'EUR') : '—'}</strong>
+              </div>
+            </div>
+
+            <div className="payroll-attendance-grid">
+              <article><span>Working days</span><strong>{attendanceSummary.workingDays}</strong></article>
+              <article><span>Present</span><strong>{attendanceSummary.present}</strong></article>
+              <article><span>Half day</span><strong>{attendanceSummary.halfDays}</strong></article>
+              <article><span>Absent</span><strong>{attendanceSummary.absent}</strong></article>
+              <article><span>Leave</span><strong>{attendanceSummary.leave}</strong></article>
+            </div>
+
+            {!locked ? (
+              <>
+                <form className="payroll-form" onSubmit={(event) => { event.preventDefault(); saveDraft() }}>
+                  <label>
+                    Basic salary
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={values.basic_salary} onChange={(event) => setValues((current) => ({ ...current, basic_salary: event.target.value }))} required />
+                  </label>
+                  <label>
+                    Bonus
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={values.bonus} onChange={(event) => setValues((current) => ({ ...current, bonus: event.target.value }))} />
+                  </label>
+                  <label>
+                    Allowance
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={values.allowance} onChange={(event) => setValues((current) => ({ ...current, allowance: event.target.value }))} />
+                  </label>
+                  <label>
+                    Deductions
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={values.deductions} onChange={(event) => setValues((current) => ({ ...current, deductions: event.target.value }))} />
+                  </label>
+                  <label>
+                    Salary advance
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={values.advance} onChange={(event) => setValues((current) => ({ ...current, advance: event.target.value }))} />
+                  </label>
+                  <label className="payroll-notes-field">
+                    Notes
+                    <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Optional payroll note" />
+                  </label>
+                </form>
+
+                <div className="payroll-calculation">
+                  <div><span>Gross earnings</span><strong>{formatCurrency(gross, currency)}</strong></div>
+                  <div><span>Total deductions</span><strong>−{formatCurrency(deductions + advance, currency)}</strong></div>
+                  <div className="payroll-net"><span>Net salary</span><strong>{formatCurrency(net, currency)}</strong></div>
+                </div>
+                <p className="module-note">Attendance is recorded on the payslip, but it does not deduct salary automatically. Enter any required deduction manually.</p>
+
+                <div className="payroll-actions">
+                  <button className="outline-light-button" type="button" disabled={busy} onClick={saveDraft}>{busy ? 'Saving…' : 'Save draft'}</button>
+                  <button className="primary-button" type="button" disabled={busy} onClick={finalizePayroll}>{busy ? 'Creating…' : 'Finalize & create PDF'}</button>
+                  {selectedPayroll?.status === 'draft' && <button className="small-button danger-button" type="button" disabled={busy} onClick={deleteDraft}>Delete draft</button>}
+                </div>
+              </>
+            ) : selectedPayroll && selectedEmployee ? (
+              <div className="finalized-payroll-panel">
+                <div className="payroll-calculation finalized-calculation">
+                  <div><span>Basic salary</span><strong>{formatCurrency(Number(selectedPayroll.basic_salary), selectedPayroll.currency)}</strong></div>
+                  <div><span>Bonus & allowance</span><strong>{formatCurrency(Number(selectedPayroll.bonus) + Number(selectedPayroll.allowance), selectedPayroll.currency)}</strong></div>
+                  <div><span>Deductions & advance</span><strong>−{formatCurrency(Number(selectedPayroll.deductions) + Number(selectedPayroll.advance), selectedPayroll.currency)}</strong></div>
+                  <div className="payroll-net"><span>Net salary</span><strong>{formatCurrency(Number(selectedPayroll.net_salary), selectedPayroll.currency)}</strong></div>
+                </div>
+                <div className="payroll-actions">
+                  <button className="primary-button" type="button" disabled={!selectedPayroll.payslip_path || downloadingId === selectedPayroll.id} onClick={() => download(selectedPayroll, selectedEmployee)}>
+                    {downloadingId === selectedPayroll.id ? 'Preparing…' : 'Download PDF'}
+                  </button>
+                  {selectedPayroll.status === 'finalized' && <button className="success-button small-button" type="button" disabled={busy} onClick={markPaid}>{busy ? 'Updating…' : 'Mark paid'}</button>}
+                  <button className="outline-light-button" type="button" disabled={busy} onClick={reopenDraft}>Reopen draft</button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+
+        {message && <p className="success-message payroll-message">{message}</p>}
+        {error && <p className="error-message panel-message">{error}</p>}
+      </section>
+
+      <section className="content-card">
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">PAYROLL HISTORY</p>
+            <h2>Monthly records</h2>
+            <p className="section-copy">Draft, finalized and paid records for the full team.</p>
+          </div>
+          <span className="count-pill">{history.length}</span>
+        </div>
+
+        {history.length === 0 ? (
+          <div className="empty-state">No payroll records yet.</div>
+        ) : (
+          <div className="payroll-history-list">
+            {history.map((item) => {
+              const employee = employees.find((entry) => entry.id === item.employee_id)
+              return (
+                <article className="payroll-history-card" key={item.id}>
+                  <div>
+                    <strong>{employee?.full_name || employee?.email || 'Employee'}</strong>
+                    <p>{formatMonth(item.period_start)} • {item.present_days} present • {item.half_day_days || 0} half day</p>
+                  </div>
+                  <div className="payslip-side">
+                    <strong>{formatCurrency(Number(item.net_salary), item.currency)}</strong>
+                    <span className={`status-badge ${item.status === 'paid' ? 'approved' : item.status === 'finalized' ? 'pending' : ''}`}>{item.status}</span>
+                    {item.payslip_path && employee && (
+                      <button className="small-button" type="button" disabled={downloadingId === item.id} onClick={() => download(item, employee)}>
+                        {downloadingId === item.id ? 'Preparing…' : 'PDF'}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
       </section>
     </div>
   )
@@ -2424,6 +3124,7 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'transactions', label: 'Transactions' },
         { view: 'employees', label: 'Employees' },
         { view: 'attendance', label: 'Attendance' },
+        { view: 'payroll', label: 'Payroll' },
         { view: 'products', label: 'Products' },
       ]
     : [{ view: 'dashboard', label: 'Home' }]
@@ -2542,6 +3243,19 @@ function Dashboard({ profile }: { profile: Profile }) {
               attendance={attendance}
               onChanged={loadData}
               onBack={employeeBack}
+            />
+          )
+        )}
+        {activeView === 'payroll' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading payroll…</div>
+          ) : (
+            <PayrollManager
+              profile={profile}
+              profiles={profiles}
+              attendance={attendance}
+              payrolls={payrolls}
+              onChanged={loadData}
             />
           )
         )}

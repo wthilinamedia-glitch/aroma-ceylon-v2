@@ -692,3 +692,114 @@ input:focus, select:focus, textarea:focus {
   .product-description-field, .product-photo-field, .product-submit, .product-remove-photo, .product-modal-actions { grid-column: 1; }
   .product-image-wrap { height: 175px; }
 }
+
+
+/* Payroll & PDF payslip */
+.payroll-control-card { overflow: visible; }
+.payroll-selectors {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(170px, .8fr) minmax(180px, .8fr);
+  gap: 12px;
+  align-items: end;
+  margin: 20px 0 16px;
+}
+.payroll-profile-rate {
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--cream);
+}
+.payroll-profile-rate span { color: #75695d; font-size: .72rem; }
+.payroll-profile-rate strong { margin-top: 5px; font-size: 1rem; }
+.payroll-attendance-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0 0 18px;
+}
+.payroll-attendance-grid article {
+  padding: 13px 11px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdf8;
+}
+.payroll-attendance-grid span,
+.payroll-attendance-grid strong { display: block; }
+.payroll-attendance-grid span { color: #75695d; font-size: .68rem; }
+.payroll-attendance-grid strong { margin-top: 5px; font-size: 1.1rem; }
+.payroll-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.payroll-notes-field { grid-column: 1 / -1; }
+.payroll-calculation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 10px;
+  padding: 13px;
+  border-radius: 17px;
+  background: #1b1511;
+  color: #fff9ec;
+}
+.payroll-calculation div {
+  padding: 9px 10px;
+  border-right: 1px solid rgba(255,255,255,.12);
+}
+.payroll-calculation div:last-child { border-right: 0; }
+.payroll-calculation span,
+.payroll-calculation strong { display: block; }
+.payroll-calculation span { color: #d9caa9; font-size: .72rem; }
+.payroll-calculation strong { margin-top: 6px; }
+.payroll-calculation .payroll-net strong { color: #e4bc63; font-size: 1.25rem; }
+.payroll-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  margin-top: 15px;
+}
+.payroll-message { margin-top: 15px; }
+.finalized-payroll-panel { margin-top: 16px; }
+.finalized-calculation { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.payroll-history-list,
+.payslip-list { display: grid; gap: 10px; }
+.payroll-history-card,
+.employee-payslip-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffdf8;
+}
+.payroll-history-card p,
+.employee-payslip-card p { margin: 5px 0 0; color: #75695d; font-size: .78rem; }
+.payslip-download-button { margin-top: 6px; }
+
+@media (max-width: 720px) {
+  .payroll-selectors { grid-template-columns: 1fr; }
+  .payroll-attendance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .payroll-form { grid-template-columns: 1fr 1fr; }
+  .payroll-notes-field { grid-column: 1 / -1; }
+  .payroll-calculation,
+  .finalized-calculation { grid-template-columns: 1fr; }
+  .payroll-calculation div { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .payroll-calculation div:last-child { border-bottom: 0; }
+  .payroll-history-card,
+  .employee-payslip-card { align-items: flex-start; flex-direction: column; }
+  .payroll-history-card .payslip-side,
+  .employee-payslip-card .payslip-side { width: 100%; align-items: flex-start; text-align: left; }
+}
+
+@media (max-width: 440px) {
+  .payroll-form { grid-template-columns: 1fr; }
+  .payroll-notes-field { grid-column: auto; }
+}
