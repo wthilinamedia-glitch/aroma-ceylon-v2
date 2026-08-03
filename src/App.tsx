@@ -5,10 +5,13 @@ import { jsPDF } from 'jspdf'
 import { supabase } from './lib/supabase'
 import { addPremiumPdfFooter, addPremiumPdfHeader, drawPdfSectionTitle, loadPdfLogoDataUrl, PDF_BRAND } from './lib/pdfBrand'
 import { SalesManager } from './SalesManager'
+import { MessagesCenter } from './MessagesCenter'
+import { OperationsHub } from './OperationsHub'
+import { type AppLanguage, useAutoTranslate } from './i18n'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
-type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'sales' | 'payslips' | 'profile'
+type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'sales' | 'messages' | 'inventory' | 'reports' | 'payslips' | 'profile'
 
 type Profile = {
   id: string
@@ -20,6 +23,7 @@ type Profile = {
   phone: string | null
   monthly_salary: number
   salary_currency: string
+  preferred_language?: AppLanguage
 }
 
 type IncomeRecord = {
@@ -70,6 +74,7 @@ type PayrollRecord = {
   employee_id: string
   period_start: string
   currency: string
+  exchange_rate_lkr?: number
   basic_salary: number
   bonus: number
   allowance: number
@@ -107,6 +112,8 @@ type ProductRecord = {
   created_by: string
   created_at: string
   updated_at: string
+  stock_quantity?: number
+  reorder_level?: number
 }
 
 type ShopRecord = {
@@ -130,6 +137,10 @@ type ShopRecord = {
   created_by: string
   created_at: string
   updated_at: string
+  preferred_language?: AppLanguage
+  default_tax_rate?: number
+  default_discount?: number
+  preferred_payment_method?: string
 }
 
 type CompressedImage = {
@@ -1993,6 +2004,7 @@ function PayrollManager({
     allowance: '0',
     deductions: '0',
     advance: '0',
+    exchange_rate_lkr: '1',
     notes: '',
   })
   const [busy, setBusy] = useState(false)
@@ -2039,6 +2051,7 @@ function PayrollManager({
         allowance: String(Number(selectedPayroll.allowance || 0)),
         deductions: String(Number(selectedPayroll.deductions || 0)),
         advance: String(Number(selectedPayroll.advance || 0)),
+        exchange_rate_lkr: String(Number(selectedPayroll.exchange_rate_lkr || 1)),
         notes: selectedPayroll.notes || '',
       })
     } else {
@@ -2048,6 +2061,7 @@ function PayrollManager({
         allowance: '0',
         deductions: '0',
         advance: '0',
+        exchange_rate_lkr: '1',
         notes: '',
       })
     }
@@ -2058,6 +2072,7 @@ function PayrollManager({
   const allowance = Number(values.allowance || 0)
   const deductions = Number(values.deductions || 0)
   const advance = Number(values.advance || 0)
+  const payrollExchangeRate = Number(values.exchange_rate_lkr || 1)
   const gross = basic + bonus + allowance
   const net = gross - deductions - advance
   const currency = selectedPayroll?.currency || selectedEmployee?.salary_currency || 'EUR'
@@ -2069,11 +2084,15 @@ function PayrollManager({
       throw new Error('Salary amounts must be valid positive numbers or zero.')
     }
     if (net < 0) throw new Error('Net salary cannot be below zero.')
+    if ((selectedEmployee.salary_currency || 'EUR') === 'EUR' && payrollExchangeRate <= 0) {
+      throw new Error('Enter the EUR to LKR exchange rate for profit calculations.')
+    }
 
     return {
       employee_id: selectedEmployee.id,
       period_start: periodStart,
       currency: selectedEmployee.salary_currency || 'EUR',
+      exchange_rate_lkr: (selectedEmployee.salary_currency || 'EUR') === 'EUR' ? payrollExchangeRate : 1,
       basic_salary: basic,
       bonus,
       allowance,
@@ -2343,6 +2362,10 @@ function PayrollManager({
                     Salary advance
                     <input type="number" min="0" step="0.01" inputMode="decimal" value={values.advance} onChange={(event) => setValues((current) => ({ ...current, advance: event.target.value }))} />
                   </label>
+                  {currency === 'EUR' && <label>
+                    EUR to LKR exchange rate
+                    <input type="number" min="0.0001" step="0.0001" inputMode="decimal" value={values.exchange_rate_lkr} onChange={(event) => setValues((current) => ({ ...current, exchange_rate_lkr: event.target.value }))} required />
+                  </label>}
                   <label className="payroll-notes-field">
                     Notes
                     <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Optional payroll note" />
@@ -2666,6 +2689,8 @@ function ProductManager({
     selling_price: '',
     cost_price: '',
     currency: 'EUR',
+    stock_quantity: '0',
+    reorder_level: '0',
     description: '',
   }
   const [form, setForm] = useState(emptyForm)
@@ -2767,6 +2792,8 @@ function ProductManager({
         selling_price: Number(form.selling_price),
         cost_price: form.cost_price ? Number(form.cost_price) : null,
         currency: form.currency,
+        stock_quantity: Number(form.stock_quantity || 0),
+        reorder_level: Number(form.reorder_level || 0),
         description: form.description.trim() || null,
         photo_path: photoPath,
         active: true,
@@ -2795,6 +2822,8 @@ function ProductManager({
       selling_price: String(product.selling_price),
       cost_price: product.cost_price === null ? '' : String(product.cost_price),
       currency: product.currency || 'EUR',
+      stock_quantity: String(Number(product.stock_quantity || 0)),
+      reorder_level: String(Number(product.reorder_level || 0)),
       description: product.description || '',
     })
     setReplacementPhoto(null)
@@ -2835,6 +2864,8 @@ function ProductManager({
           selling_price: Number(editForm.selling_price),
           cost_price: editForm.cost_price ? Number(editForm.cost_price) : null,
           currency: editForm.currency,
+          stock_quantity: Number(editForm.stock_quantity || 0),
+          reorder_level: Number(editForm.reorder_level || 0),
           description: editForm.description.trim() || null,
           photo_path: nextPhotoPath,
         })
@@ -2911,6 +2942,14 @@ function ProductManager({
           <option value="EUR">EUR</option>
           <option value="LKR">LKR</option>
         </select>
+      </label>
+      <label>
+        Opening / current stock
+        <input type="number" min="0" step="0.001" value={values.stock_quantity} onChange={(event) => setValues((current) => ({ ...current, stock_quantity: event.target.value }))} />
+      </label>
+      <label>
+        Reorder level
+        <input type="number" min="0" step="0.001" value={values.reorder_level} onChange={(event) => setValues((current) => ({ ...current, reorder_level: event.target.value }))} />
       </label>
       <label className="product-description-field">
         Description (optional)
@@ -3066,6 +3105,10 @@ function ShopManager({
     vat_number: '',
     payment_terms: '30 days',
     default_currency: 'EUR',
+    preferred_language: 'en' as AppLanguage,
+    default_tax_rate: '0',
+    default_discount: '0',
+    preferred_payment_method: 'Bank transfer',
     notes: '',
   }
 
@@ -3119,6 +3162,10 @@ function ShopManager({
       vat_number: values.vat_number.trim() || null,
       payment_terms: values.payment_terms,
       default_currency: values.default_currency,
+      preferred_language: values.preferred_language,
+      default_tax_rate: Number(values.default_tax_rate || 0),
+      default_discount: Number(values.default_discount || 0),
+      preferred_payment_method: values.preferred_payment_method,
       notes: values.notes.trim() || null,
     }
   }
@@ -3163,6 +3210,10 @@ function ShopManager({
       vat_number: shop.vat_number || '',
       payment_terms: shop.payment_terms || '30 days',
       default_currency: shop.default_currency || 'EUR',
+      preferred_language: shop.preferred_language || 'en',
+      default_tax_rate: String(Number(shop.default_tax_rate || 0)),
+      default_discount: String(Number(shop.default_discount || 0)),
+      preferred_payment_method: shop.preferred_payment_method || 'Bank transfer',
       notes: shop.notes || '',
     })
     setMessage('')
@@ -3271,6 +3322,27 @@ function ShopManager({
         <select value={values.default_currency} onChange={(event) => setValues((current) => ({ ...current, default_currency: event.target.value }))}>
           <option value="EUR">EUR</option>
           <option value="LKR">LKR</option>
+        </select>
+      </label>
+      <label>
+        Preferred language
+        <select value={values.preferred_language} onChange={(event) => setValues((current) => ({ ...current, preferred_language: event.target.value as AppLanguage }))}>
+          <option value="en">English</option>
+          <option value="si">සිංහල</option>
+        </select>
+      </label>
+      <label>
+        Default VAT / Tax rate (%)
+        <input type="number" min="0" max="100" step="0.001" value={values.default_tax_rate} onChange={(event) => setValues((current) => ({ ...current, default_tax_rate: event.target.value }))} />
+      </label>
+      <label>
+        Default discount
+        <input type="number" min="0" step="0.01" value={values.default_discount} onChange={(event) => setValues((current) => ({ ...current, default_discount: event.target.value }))} />
+      </label>
+      <label>
+        Preferred payment method
+        <select value={values.preferred_payment_method} onChange={(event) => setValues((current) => ({ ...current, preferred_payment_method: event.target.value }))}>
+          <option>Cash</option><option>Bank transfer</option><option>Card</option><option>Other</option>
         </select>
       </label>
       <label className="shop-wide-field">
@@ -3410,6 +3482,20 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [shops, setShops] = useState<ShopRecord[]>([])
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
+  const [unreadMessages, setUnreadMessages] = useState(0)
+  const [language, setLanguage] = useState<AppLanguage>(() => {
+    const saved = localStorage.getItem('aroma-language')
+    if (saved === 'si' || saved === 'en') return saved
+    return profile.preferred_language === 'si' ? 'si' : 'en'
+  })
+  useAutoTranslate(language)
+
+  async function changeLanguage(nextLanguage: AppLanguage) {
+    setLanguage(nextLanguage)
+    localStorage.setItem('aroma-language', nextLanguage)
+    const { error } = await supabase.rpc('set_my_language', { p_language: nextLanguage })
+    if (error) setDataError(error.message)
+  }
 
   const loadData = useCallback(async () => {
     setLoadingData(true)
@@ -3435,7 +3521,7 @@ function Dashboard({ profile }: { profile: Profile }) {
       ? supabase.from('income').select('*').order('received_date', { ascending: false }).order('created_at', { ascending: false })
       : null
     const profilesRequest = isAdmin
-      ? supabase.from('profiles').select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency').order('full_name')
+      ? supabase.from('profiles').select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency, preferred_language').order('full_name')
       : null
     const productsRequest = isAdmin
       ? supabase.from('products').select('*').order('name')
@@ -3501,6 +3587,19 @@ function Dashboard({ profile }: { profile: Profile }) {
     loadData()
   }, [loadData])
 
+  const loadUnreadMessages = useCallback(async () => {
+    const { count, error } = await supabase
+      .from('message_recipients')
+      .select('thread_id', { count: 'exact', head: true })
+      .eq('recipient_id', profile.id)
+      .is('read_at', null)
+    if (!error) setUnreadMessages(count || 0)
+  }, [profile.id])
+
+  useEffect(() => {
+    loadUnreadMessages()
+  }, [loadUnreadMessages, activeView])
+
   const profileNames = useMemo(() => {
     const map = new Map<string, string>()
     profiles.forEach((item) => map.set(item.id, item.full_name || item.email || 'User'))
@@ -3539,8 +3638,14 @@ function Dashboard({ profile }: { profile: Profile }) {
         { view: 'products', label: 'Products' },
         { view: 'shops', label: 'Shops' },
         { view: 'sales', label: 'Sales' },
+        { view: 'inventory', label: 'Inventory' },
+        { view: 'reports', label: 'Reports' },
+        { view: 'messages', label: 'Messages' },
       ]
-    : [{ view: 'dashboard', label: 'Home' }]
+    : [
+        { view: 'dashboard', label: 'Home' },
+        { view: 'messages', label: 'Messages' },
+      ]
 
   const employeeBack = isAdmin ? undefined : () => setActiveView('dashboard')
 
@@ -3554,7 +3659,16 @@ function Dashboard({ profile }: { profile: Profile }) {
             <span>{isAdmin ? 'Administrator' : 'Team Member'}</span>
           </div>
         </div>
-        <button className="outline-button" onClick={logout}>Sign out</button>
+        <div className="topbar-actions">
+          <label className="language-select">
+            <span>Language</span>
+            <select value={language} onChange={(event) => changeLanguage(event.target.value as AppLanguage)}>
+              <option value="en">English</option>
+              <option value="si">සිංහල</option>
+            </select>
+          </label>
+          <button className="outline-button" onClick={logout}>Sign out</button>
+        </div>
       </header>
 
       <nav className={`app-nav ${isAdmin ? '' : 'employee-main-nav'}`} aria-label="Main navigation">
@@ -3566,6 +3680,7 @@ function Dashboard({ profile }: { profile: Profile }) {
           >
             {item.label}
             {item.view === 'approvals' && totals.pendingCount > 0 && <span>{totals.pendingCount}</span>}
+            {item.view === 'messages' && unreadMessages > 0 && <span>{unreadMessages}</span>}
           </button>
         ))}
       </nav>
@@ -3690,7 +3805,28 @@ function Dashboard({ profile }: { profile: Profile }) {
           loadingData ? (
             <div className="content-card empty-state">Loading sales workspace…</div>
           ) : (
-            <SalesManager profile={profile} shops={shops} products={products} />
+            <SalesManager profile={profile} shops={shops} products={products} onChanged={loadData} />
+          )
+        )}
+        {activeView === 'messages' && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading messages…</div>
+          ) : (
+            <MessagesCenter profile={profile} profiles={profiles} language={language} />
+          )
+        )}
+        {activeView === 'inventory' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading inventory…</div>
+          ) : (
+            <OperationsHub mode="inventory" products={products} shops={shops} language={language} onChanged={loadData} />
+          )
+        )}
+        {activeView === 'reports' && isAdmin && (
+          loadingData ? (
+            <div className="content-card empty-state">Loading reports…</div>
+          ) : (
+            <OperationsHub mode="reports" products={products} shops={shops} language={language} onChanged={loadData} />
           )
         )}
         {activeView === 'payslips' && !isAdmin && (

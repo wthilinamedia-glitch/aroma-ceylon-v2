@@ -479,3 +479,85 @@ export async function createDeliveryNotePdfBlob(
 
   return doc.output('blob')
 }
+
+export async function createPaymentReceiptPdfBlob(
+  invoice: SalesInvoicePdfRecord,
+  shop: SalesShopPdfRecord,
+  payment: SalesInvoicePdfPayment & { id?: string; exchange_rate_lkr?: number },
+  authorizedBy: string,
+) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const margin = 16
+  let logo: string | null = null
+  try { logo = await loadPdfLogoDataUrl() } catch { logo = null }
+
+  let y = addPremiumPdfHeader(doc, {
+    title: 'PAYMENT RECEIPT',
+    subtitle: `${invoice.invoice_code} • ${formatDate(payment.payment_date)}`,
+    status: 'PAID / RECEIVED',
+    logoDataUrl: logo,
+  })
+
+  y = drawCustomerAndDocumentCards(doc, invoice, shop, y, 'Receipt details')
+  drawPdfSectionTitle(doc, 'Payment received', y)
+  y += 10
+
+  doc.setFillColor(...PDF_BRAND.cream)
+  doc.setDrawColor(...PDF_BRAND.gold)
+  doc.setLineWidth(0.45)
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 49, 3, 3, 'FD')
+
+  const rows: Array<[string, string]> = [
+    ['Amount received', formatCurrency(payment.amount, invoice.currency)],
+    ['Payment method', payment.payment_method],
+    ['Reference', payment.reference || '—'],
+    ['Payment date', formatDate(payment.payment_date)],
+    ['Invoice balance after payment', formatCurrency(invoice.balance_amount, invoice.currency)],
+  ]
+  rows.forEach(([label, value], index) => {
+    const rowY = y + 9 + index * 8
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...PDF_BRAND.muted)
+    doc.text(label, margin + 7, rowY)
+    doc.setFont(index === 0 ? 'times' : 'helvetica', 'bold')
+    doc.setFontSize(index === 0 ? 14 : 8.5)
+    doc.setTextColor(...(index === 0 ? PDF_BRAND.darkGold : PDF_BRAND.ink))
+    doc.text(value, pageWidth - margin - 7, rowY, { align: 'right' })
+  })
+
+  y += 61
+  drawPdfSectionTitle(doc, 'Confirmation', y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...PDF_BRAND.muted)
+  doc.text('This receipt confirms that Aroma Ceylon received the payment shown above.', margin, y + 11)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...PDF_BRAND.ink)
+  doc.text(`Authorized by: ${authorizedBy}`, margin, y + 22)
+
+  addAllPageFooters(doc, 'Aroma Ceylon • Authentic Ceylon Spices', 'Official payment receipt', invoice.invoice_code)
+  return doc.output('blob')
+}
+
+export async function createCreditNotePdfBlob(
+  credit: { credit_code: string; amount: number; reason: string; status: string; created_at: string },
+  invoice: { invoice_code: string; currency: string },
+  shop: { shop_name: string; shop_code?: string },
+) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const width = doc.internal.pageSize.getWidth()
+  const margin = 16
+  let logo: string | null = null
+  try { logo = await loadPdfLogoDataUrl() } catch { logo = null }
+  let y = addPremiumPdfHeader(doc, { title: 'CREDIT NOTE', subtitle: `${invoice.invoice_code} • ${formatDate(credit.created_at)}`, status: credit.status.toUpperCase(), logoDataUrl: logo })
+  drawPdfSectionTitle(doc, 'Customer and reference', y); y += 10
+  doc.setFillColor(...PDF_BRAND.cream); doc.setDrawColor(...PDF_BRAND.gold); doc.roundedRect(margin, y, width - margin * 2, 38, 3, 3, 'FD')
+  const rows: Array<[string,string]> = [['Customer', shop.shop_name], ['Invoice', invoice.invoice_code], ['Credit reference', credit.credit_code], ['Reason', credit.reason]]
+  rows.forEach(([label,value], index) => { const yy=y+8+index*8; doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...PDF_BRAND.muted); doc.text(label,margin+7,yy); doc.setFont('helvetica','bold'); doc.setTextColor(...PDF_BRAND.ink); doc.text(doc.splitTextToSize(value,100)[0] || value,width-margin-7,yy,{align:'right'}) })
+  y += 52; drawPdfSectionTitle(doc,'Credit value',y); y += 11
+  doc.setFillColor(...PDF_BRAND.paleGold); doc.setDrawColor(...PDF_BRAND.gold); doc.roundedRect(margin,y,width-margin*2,24,3,3,'FD'); doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...PDF_BRAND.darkGold); doc.text('TOTAL CREDIT',margin+8,y+14); doc.setFont('times','bold'); doc.setFontSize(18); doc.setTextColor(...PDF_BRAND.ink); doc.text(formatCurrency(credit.amount,invoice.currency),width-margin-8,y+15,{align:'right'})
+  addAllPageFooters(doc,'Aroma Ceylon • Authentic Ceylon Spices','Official credit note',invoice.invoice_code)
+  return doc.output('blob')
+}

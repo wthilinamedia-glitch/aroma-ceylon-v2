@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import {
   createDeliveryNotePdfBlob,
   createInvoicePdfBlob,
+  createPaymentReceiptPdfBlob,
   type SalesDeliveryStatus,
   type SalesInvoicePdfItem,
   type SalesInvoicePdfPayment,
@@ -41,6 +42,10 @@ type ShopLike = {
   payment_terms: string
   default_currency: string
   active: boolean
+  preferred_language?: 'en' | 'si'
+  default_tax_rate?: number
+  default_discount?: number
+  preferred_payment_method?: string
 }
 
 type InvoiceItemRecord = SalesInvoicePdfItem & {
@@ -56,6 +61,8 @@ type InvoicePaymentRecord = SalesInvoicePdfPayment & {
   notes: string | null
   created_by: string
   created_at: string
+  exchange_rate_lkr?: number
+  receipt_pdf_path?: string | null
 }
 
 type InvoiceRecord = {
@@ -99,6 +106,7 @@ type SalesManagerProps = {
   profile: ProfileLike
   shops: ShopLike[]
   products: ProductLike[]
+  onChanged?: () => void
 }
 
 function localIsoDate() {
@@ -187,7 +195,7 @@ async function downloadPrivateDocument(path: string, fileName: string) {
   link.remove()
 }
 
-export function SalesManager({ profile, shops, products }: SalesManagerProps) {
+export function SalesManager({ profile, shops, products, onChanged }: SalesManagerProps) {
   const [mode, setMode] = useState<'create' | 'history'>('create')
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -218,6 +226,7 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
   const [paymentMethod, setPaymentMethod] = useState('Bank transfer')
   const [paymentReference, setPaymentReference] = useState('')
   const [paymentNotes, setPaymentNotes] = useState('')
+  const [paymentExchangeRate, setPaymentExchangeRate] = useState('')
 
   const activeShops = useMemo(
     () => shops.filter((shop) => shop.active).sort((a, b) => a.shop_name.localeCompare(b.shop_name)),
@@ -293,16 +302,19 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
     if (!selectedShop || editingInvoiceId) return
     setCurrency(selectedShop.default_currency || 'EUR')
     setDueDate(addDays(invoiceDate, paymentTermDays(selectedShop.payment_terms)))
+    setDiscount(String(Number(selectedShop.default_discount || 0)))
+    setTaxRate(String(Number(selectedShop.default_tax_rate || 0)))
   }, [selectedShop, invoiceDate, editingInvoiceId])
 
   useEffect(() => {
     if (!paymentInvoice) return
     setPaymentAmount(Number(paymentInvoice.balance_amount || 0).toFixed(2))
     setPaymentDate(localIsoDate())
-    setPaymentMethod('Bank transfer')
+    const invoiceShop = shops.find((shop) => shop.id === paymentInvoice.shop_id)
+    setPaymentMethod(invoiceShop?.preferred_payment_method || 'Bank transfer')
     setPaymentReference('')
     setPaymentNotes('')
-  }, [paymentInvoice])
+  }, [paymentInvoice, shops])
 
   const draftTotals = useMemo(() => {
     const subtotal = draftItems.reduce((sum, item) => {
@@ -615,6 +627,7 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
     setMessage(nextStatus === 'delivered' ? 'Delivery marked as delivered.' : 'Delivery marked as packed.')
     setBusy(false)
     await loadInvoices()
+    onChanged?.()
   }
 
   async function addPayment(event: FormEvent) {
@@ -631,15 +644,22 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
       return
     }
 
-    const { error: paymentError } = await supabase.from('sales_invoice_payments').insert({
+    if (paymentInvoice.currency === 'EUR' && Number(paymentExchangeRate || 0) <= 0) {
+      setBusy(false)
+      setError('Enter the EUR to LKR exchange rate so the payment can be added to income and profit correctly.')
+      return
+    }
+
+    const { data: savedPayment, error: paymentError } = await supabase.from('sales_invoice_payments').insert({
       invoice_id: paymentInvoice.id,
       payment_date: paymentDate,
       amount,
       payment_method: paymentMethod,
       reference: paymentReference.trim() || null,
       notes: paymentNotes.trim() || null,
+      exchange_rate_lkr: paymentInvoice.currency === 'EUR' ? Number(paymentExchangeRate || 0) : 1,
       created_by: profile.id,
-    })
+    }).select('*').single()
 
     if (paymentError) {
       setBusy(false)
@@ -653,16 +673,25 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
       if (shop) {
         const path = await uploadInvoicePdf(current, shop)
         await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
+        if (savedPayment) {
+          const receiptBlob = await createPaymentReceiptPdfBlob(current, shop, savedPayment, profile.full_name || profile.email || 'Administrator')
+          const receiptPath = `${current.id}/receipt-${savedPayment.id}.pdf`
+          const { error: receiptUploadError } = await supabase.storage.from('sales-documents').upload(receiptPath, receiptBlob, { contentType: 'application/pdf', upsert: true })
+          if (receiptUploadError) throw receiptUploadError
+          await supabase.from('sales_invoice_payments').update({ receipt_pdf_path: receiptPath }).eq('id', savedPayment.id)
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Payment saved, but the invoice PDF could not be refreshed.')
     }
 
     setPaymentInvoiceId(null)
+    setPaymentExchangeRate('')
     setSelectedInvoiceId(null)
     setMessage('Payment recorded and the outstanding balance updated.')
     setBusy(false)
     await loadInvoices()
+    onChanged?.()
   }
 
   async function removePayment(invoice: InvoiceRecord, payment: InvoicePaymentRecord) {
@@ -694,6 +723,20 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
     setSelectedInvoiceId(null)
     setBusy(false)
     await loadInvoices()
+    onChanged?.()
+  }
+
+  async function downloadPaymentReceipt(invoice: InvoiceRecord, payment: InvoicePaymentRecord) {
+    if (!payment.receipt_pdf_path) return
+    setDownloadBusy(`receipt-${payment.id}`)
+    setError('')
+    try {
+      await downloadPrivateDocument(payment.receipt_pdf_path, `Aroma_Ceylon_Receipt_${safeFilePart(invoice.invoice_code)}_${safeFilePart(payment.id)}.pdf`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to download the payment receipt.')
+    } finally {
+      setDownloadBusy('')
+    }
   }
 
   async function downloadInvoice(invoice: InvoiceRecord) {
@@ -1008,7 +1051,7 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
               {selectedInvoice.payments.length === 0 ? <p className="section-copy">No payments recorded.</p> : selectedInvoice.payments.map((payment) => (
                 <div className="sales-payment-row" key={payment.id}>
                   <span><strong>{formatCurrency(payment.amount, selectedInvoice.currency)}</strong><small>{formatDate(payment.payment_date)} • {payment.payment_method}{payment.reference ? ` • ${payment.reference}` : ''}</small></span>
-                  <button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Delete</button>
+                  <span className="sales-payment-actions">{payment.receipt_pdf_path && <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => downloadPaymentReceipt(selectedInvoice, payment)}>Receipt PDF</button>}<button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Delete</button></span>
                 </div>
               ))}
             </div>
@@ -1049,6 +1092,10 @@ export function SalesManager({ profile, shops, products }: SalesManagerProps) {
                 Amount ({paymentInvoice.currency})
                 <input type="number" min="0.01" max={Number(paymentInvoice.balance_amount)} step="0.01" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} required />
               </label>
+              {paymentInvoice.currency === 'EUR' && <label>
+                EUR to LKR exchange rate
+                <input type="number" min="0.0001" step="0.0001" value={paymentExchangeRate} onChange={(event) => setPaymentExchangeRate(event.target.value)} required />
+              </label>}
               <label>
                 Method
                 <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
