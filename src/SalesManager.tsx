@@ -23,6 +23,8 @@ type ProductLike = {
   pack_size: string | null
   selling_price: number
   currency: string
+  stock_quantity?: number
+  reorder_level?: number
   active: boolean
 }
 
@@ -79,6 +81,7 @@ type InvoiceRecord = {
   tax_rate: number
   tax_amount: number
   total_amount: number
+  credited_amount?: number
   paid_amount: number
   balance_amount: number
   status: SalesInvoiceStatus
@@ -314,6 +317,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setPaymentMethod(invoiceShop?.preferred_payment_method || 'Bank transfer')
     setPaymentReference('')
     setPaymentNotes('')
+    setPaymentExchangeRate('')
   }, [paymentInvoice, shops])
 
   const draftTotals = useMemo(() => {
@@ -353,14 +357,16 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
   }, [invoices, shops, search, statusFilter, deliveryFilter])
 
   const salesSummary = useMemo(() => {
-    const issued = invoices.filter((invoice) => !['draft', 'cancelled'].includes(invoice.status))
+    const result: Record<string, { invoiced: number; paid: number; outstanding: number }> = {}
+    invoices.filter((invoice) => !['draft', 'cancelled'].includes(invoice.status)).forEach((invoice) => {
+      const row = result[invoice.currency] ||= { invoiced: 0, paid: 0, outstanding: 0 }
+      row.invoiced += Math.max(Number(invoice.total_amount || 0) - Number(invoice.credited_amount || 0), 0)
+      row.paid += Number(invoice.paid_amount || 0)
+      row.outstanding += Number(invoice.balance_amount || 0)
+    })
     return {
-      invoiced: issued.reduce((sum, invoice) => sum + Number(invoice.total_amount || 0), 0),
-      paid: issued.reduce((sum, invoice) => sum + Number(invoice.paid_amount || 0), 0),
-      outstanding: issued.reduce((sum, invoice) => sum + Number(invoice.balance_amount || 0), 0),
-      overdue: issued.filter((invoice) => invoice.status === 'overdue').length,
-      currency: issued[0]?.currency || 'EUR',
-      mixed: new Set(issued.map((invoice) => invoice.currency)).size > 1,
+      byCurrency: result,
+      overdue: invoices.filter((invoice) => invoice.status === 'overdue').length,
     }
   }, [invoices])
 
@@ -450,6 +456,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setMessage(editingInvoiceId ? 'Invoice draft updated.' : 'Invoice draft saved.')
     resetForm()
     setMode('history')
+    onChanged?.()
   }
 
   function editDraft(invoice: InvoiceRecord) {
@@ -493,6 +500,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setSelectedInvoiceId(null)
     setMessage('Invoice draft deleted.')
     await loadInvoices()
+    onChanged?.()
   }
 
   async function fetchInvoiceBundle(invoiceId: string) {
@@ -566,6 +574,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       setMessage('Invoice finalized. Invoice PDF and delivery note created.')
       setSelectedInvoiceId(null)
       await loadInvoices()
+      onChanged?.()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to finalize the invoice.')
     } finally {
@@ -592,6 +601,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       if (updateError) throw updateError
       setMessage('Invoice and delivery PDFs refreshed.')
       await loadInvoices()
+      onChanged?.()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to refresh the PDFs.')
     } finally {
@@ -600,8 +610,24 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
   }
 
   async function updateDeliveryStatus(invoice: InvoiceRecord, nextStatus: SalesDeliveryStatus) {
-    setBusy(true)
     setError('')
+    if (nextStatus === 'delivered') {
+      const requiredByProduct = new Map<string, number>()
+      invoice.items.forEach((item) => {
+        if (item.product_id) requiredByProduct.set(item.product_id, (requiredByProduct.get(item.product_id) || 0) + Number(item.quantity || 0))
+      })
+      const shortages = [...requiredByProduct.entries()].flatMap(([productId, required]) => {
+        const product = products.find((candidate) => candidate.id === productId)
+        if (!product || Number(product.stock_quantity || 0) + 0.0005 >= required) return []
+        return [`${product.name}: available ${Number(product.stock_quantity || 0).toFixed(3)}, required ${required.toFixed(3)}`]
+      })
+      if (shortages.length) {
+        setError(`Insufficient stock. ${shortages.join(' · ')}`)
+        return
+      }
+      if (!window.confirm(`Mark ${invoice.invoice_code} as delivered and deduct stock?`)) return
+    }
+    setBusy(true)
     const deliveredAt = nextStatus === 'delivered' ? new Date().toISOString() : null
     const { error: updateError } = await supabase
       .from('sales_invoices')
@@ -613,18 +639,22 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       return
     }
 
+    let deliveryPdfUpdated = true
     try {
       const current = await fetchInvoiceBundle(invoice.id)
       const shop = shops.find((item) => item.id === current.shop_id)
-      if (shop) {
-        const path = await uploadDeliveryPdf(current, shop)
-        await supabase.from('sales_invoices').update({ delivery_pdf_path: path }).eq('id', invoice.id)
-      }
+      if (!shop) throw new Error('Delivery status was saved, but the invoice shop is unavailable for the PDF.')
+      const path = await uploadDeliveryPdf(current, shop)
+      const { error: pathError } = await supabase.from('sales_invoices').update({ delivery_pdf_path: path }).eq('id', invoice.id)
+      if (pathError) throw pathError
     } catch (caught) {
+      deliveryPdfUpdated = false
       setError(caught instanceof Error ? caught.message : 'Delivery status saved, but the PDF could not be refreshed.')
     }
 
-    setMessage(nextStatus === 'delivered' ? 'Delivery marked as delivered.' : 'Delivery marked as packed.')
+    setMessage(deliveryPdfUpdated
+      ? (nextStatus === 'delivered' ? 'Delivery marked as delivered.' : 'Delivery marked as packed.')
+      : (nextStatus === 'delivered' ? 'Delivery marked as delivered. Use Refresh PDFs to recreate the delivery note.' : 'Delivery marked as packed. Use Refresh PDFs to recreate the delivery note.'))
     setBusy(false)
     await loadInvoices()
     onChanged?.()
@@ -667,28 +697,33 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       return
     }
 
+    let paymentDocumentsUpdated = true
     try {
       const current = await fetchInvoiceBundle(paymentInvoice.id)
       const shop = shops.find((item) => item.id === current.shop_id)
-      if (shop) {
-        const path = await uploadInvoicePdf(current, shop)
-        await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
-        if (savedPayment) {
-          const receiptBlob = await createPaymentReceiptPdfBlob(current, shop, savedPayment, profile.full_name || profile.email || 'Administrator')
-          const receiptPath = `${current.id}/receipt-${savedPayment.id}.pdf`
-          const { error: receiptUploadError } = await supabase.storage.from('sales-documents').upload(receiptPath, receiptBlob, { contentType: 'application/pdf', upsert: true })
-          if (receiptUploadError) throw receiptUploadError
-          await supabase.from('sales_invoice_payments').update({ receipt_pdf_path: receiptPath }).eq('id', savedPayment.id)
-        }
+      if (!shop) throw new Error('Payment was saved, but the invoice shop is unavailable for PDF generation.')
+      const path = await uploadInvoicePdf(current, shop)
+      const { error: invoicePathError } = await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
+      if (invoicePathError) throw invoicePathError
+      if (savedPayment) {
+        const receiptBlob = await createPaymentReceiptPdfBlob(current, shop, savedPayment, profile.full_name || profile.email || 'Administrator')
+        const receiptPath = `${current.id}/receipt-${savedPayment.id}.pdf`
+        const { error: receiptUploadError } = await supabase.storage.from('sales-documents').upload(receiptPath, receiptBlob, { contentType: 'application/pdf', upsert: true })
+        if (receiptUploadError) throw receiptUploadError
+        const { error: receiptPathError } = await supabase.from('sales_invoice_payments').update({ receipt_pdf_path: receiptPath }).eq('id', savedPayment.id)
+        if (receiptPathError) throw receiptPathError
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Payment saved, but the invoice PDF could not be refreshed.')
+      paymentDocumentsUpdated = false
+      setError(caught instanceof Error ? caught.message : 'Payment saved, but one or more PDFs could not be refreshed.')
     }
 
     setPaymentInvoiceId(null)
     setPaymentExchangeRate('')
     setSelectedInvoiceId(null)
-    setMessage('Payment recorded and the outstanding balance updated.')
+    setMessage(paymentDocumentsUpdated
+      ? 'Payment recorded, income updated and the outstanding balance recalculated.'
+      : 'Payment and income were recorded. Open the invoice to recreate any missing PDF.')
     setBusy(false)
     await loadInvoices()
     onChanged?.()
@@ -707,23 +742,54 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       setError(deleteError.message)
       return
     }
+    if (payment.receipt_pdf_path) {
+      const { error: removeReceiptError } = await supabase.storage.from('sales-documents').remove([payment.receipt_pdf_path])
+      if (removeReceiptError) setError(`Payment was removed, but the old receipt file could not be deleted: ${removeReceiptError.message}`)
+    }
 
+    let invoicePdfUpdated = true
     try {
       const current = await fetchInvoiceBundle(invoice.id)
       const shop = shops.find((item) => item.id === current.shop_id)
-      if (shop) {
-        const path = await uploadInvoicePdf(current, shop)
-        await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
-      }
+      if (!shop) throw new Error('Payment was removed, but the invoice shop is unavailable for PDF generation.')
+      const path = await uploadInvoicePdf(current, shop)
+      const { error: invoicePathError } = await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
+      if (invoicePathError) throw invoicePathError
     } catch (caught) {
+      invoicePdfUpdated = false
       setError(caught instanceof Error ? caught.message : 'Payment removed, but the invoice PDF could not be refreshed.')
     }
 
-    setMessage('Payment removed and the balance recalculated.')
+    setMessage(invoicePdfUpdated
+      ? 'Payment removed. Income and the invoice balance were recalculated.'
+      : 'Payment and its income entry were removed. Use Refresh PDFs on the invoice.')
     setSelectedInvoiceId(null)
     setBusy(false)
     await loadInvoices()
     onChanged?.()
+  }
+
+  async function createOrRefreshPaymentReceipt(invoice: InvoiceRecord, payment: InvoicePaymentRecord) {
+    setDownloadBusy(`receipt-${payment.id}`)
+    setError('')
+    try {
+      const current = await fetchInvoiceBundle(invoice.id)
+      const shop = shops.find((item) => item.id === current.shop_id)
+      if (!shop) throw new Error('The invoice shop is unavailable.')
+      const currentPayment = current.payments.find((item) => item.id === payment.id) || payment
+      const receiptBlob = await createPaymentReceiptPdfBlob(current, shop, currentPayment, profile.full_name || profile.email || 'Administrator')
+      const receiptPath = `${current.id}/receipt-${payment.id}.pdf`
+      const { error: receiptUploadError } = await supabase.storage.from('sales-documents').upload(receiptPath, receiptBlob, { contentType: 'application/pdf', upsert: true })
+      if (receiptUploadError) throw receiptUploadError
+      const { error: pathError } = await supabase.from('sales_invoice_payments').update({ receipt_pdf_path: receiptPath }).eq('id', payment.id)
+      if (pathError) throw pathError
+      setMessage('Payment receipt PDF created.')
+      await loadInvoices()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to create the payment receipt.')
+    } finally {
+      setDownloadBusy('')
+    }
   }
 
   async function downloadPaymentReceipt(invoice: InvoiceRecord, payment: InvoicePaymentRecord) {
@@ -868,7 +934,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                     <select value={item.product_id} onChange={(event) => updateDraftItem(item.key, 'product_id', event.target.value)}>
                       <option value="">Select product</option>
                       {availableProducts.map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>{candidate.sku} • {candidate.name}{candidate.pack_size ? ` • ${candidate.pack_size}` : ''}</option>
+                        <option key={candidate.id} value={candidate.id}>{candidate.sku} • {candidate.name}{candidate.pack_size ? ` • ${candidate.pack_size}` : ''} • Stock {Number(candidate.stock_quantity || 0).toFixed(3)}</option>
                       ))}
                     </select>
                   </label>
@@ -915,9 +981,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       {mode === 'history' && (
         <>
           <section className="sales-summary-grid">
-            <article><span>Total invoiced</span><strong>{salesSummary.mixed ? 'Mixed currencies' : formatCurrency(salesSummary.invoiced, salesSummary.currency)}</strong></article>
-            <article><span>Payments received</span><strong>{salesSummary.mixed ? 'Mixed currencies' : formatCurrency(salesSummary.paid, salesSummary.currency)}</strong></article>
-            <article><span>Outstanding</span><strong>{salesSummary.mixed ? 'Mixed currencies' : formatCurrency(salesSummary.outstanding, salesSummary.currency)}</strong></article>
+            {Object.entries(salesSummary.byCurrency).map(([summaryCurrency, summary]) => <article key={summaryCurrency}><span>Sales / received / outstanding ({summaryCurrency})</span><strong>{formatCurrency(summary.invoiced, summaryCurrency)}</strong><small>{formatCurrency(summary.paid, summaryCurrency)} received · {formatCurrency(summary.outstanding, summaryCurrency)} due</small></article>)}
             <article><span>Overdue invoices</span><strong>{salesSummary.overdue}</strong></article>
           </section>
 
@@ -980,7 +1044,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                         </div>
                       </div>
                       <div className="sales-money-grid">
-                        <div><span>Total</span><strong>{formatCurrency(invoice.total_amount, invoice.currency)}</strong></div>
+                        <div><span>Net total</span><strong>{formatCurrency(Math.max(Number(invoice.total_amount) - Number(invoice.credited_amount || 0), 0), invoice.currency)}</strong></div>
                         <div><span>Paid</span><strong>{formatCurrency(invoice.paid_amount, invoice.currency)}</strong></div>
                         <div><span>Balance</span><strong>{formatCurrency(invoice.balance_amount, invoice.currency)}</strong></div>
                         <div><span>Items</span><strong>{invoice.items.length}</strong></div>
@@ -1041,7 +1105,8 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
               <div><span>Subtotal</span><strong>{formatCurrency(selectedInvoice.subtotal, selectedInvoice.currency)}</strong></div>
               <div><span>Discount</span><strong>−{formatCurrency(selectedInvoice.discount_amount, selectedInvoice.currency)}</strong></div>
               <div><span>Tax</span><strong>{formatCurrency(selectedInvoice.tax_amount, selectedInvoice.currency)}</strong></div>
-              <div><span>Total</span><strong>{formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}</strong></div>
+              <div><span>Invoice total</span><strong>{formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}</strong></div>
+              {Number(selectedInvoice.credited_amount || 0) > 0 && <div><span>Credit notes</span><strong>−{formatCurrency(Number(selectedInvoice.credited_amount || 0), selectedInvoice.currency)}</strong></div>}
               <div><span>Paid</span><strong>{formatCurrency(selectedInvoice.paid_amount, selectedInvoice.currency)}</strong></div>
               <div className="sales-detail-balance"><span>Balance</span><strong>{formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)}</strong></div>
             </div>
@@ -1051,7 +1116,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
               {selectedInvoice.payments.length === 0 ? <p className="section-copy">No payments recorded.</p> : selectedInvoice.payments.map((payment) => (
                 <div className="sales-payment-row" key={payment.id}>
                   <span><strong>{formatCurrency(payment.amount, selectedInvoice.currency)}</strong><small>{formatDate(payment.payment_date)} • {payment.payment_method}{payment.reference ? ` • ${payment.reference}` : ''}</small></span>
-                  <span className="sales-payment-actions">{payment.receipt_pdf_path && <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => downloadPaymentReceipt(selectedInvoice, payment)}>Receipt PDF</button>}<button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Delete</button></span>
+                  <span className="sales-payment-actions">{payment.receipt_pdf_path ? <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => downloadPaymentReceipt(selectedInvoice, payment)}>Receipt PDF</button> : <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => createOrRefreshPaymentReceipt(selectedInvoice, payment)}>{downloadBusy === `receipt-${payment.id}` ? 'Preparing…' : 'Create receipt PDF'}</button>}<button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Delete</button></span>
                 </div>
               ))}
             </div>

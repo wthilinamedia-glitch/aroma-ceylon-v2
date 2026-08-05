@@ -4,10 +4,11 @@ import type { Session } from '@supabase/supabase-js'
 import { jsPDF } from 'jspdf'
 import { supabase } from './lib/supabase'
 import { addPremiumPdfFooter, addPremiumPdfHeader, drawPdfSectionTitle, loadPdfLogoDataUrl, PDF_BRAND } from './lib/pdfBrand'
+import { drawPdfText } from './lib/pdfText'
 import { SalesManager } from './SalesManager'
 import { MessagesCenter } from './MessagesCenter'
 import { OperationsHub } from './OperationsHub'
-import { type AppLanguage, useAutoTranslate } from './i18n'
+import { type AppLanguage, t, useAutoTranslate } from './i18n'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
@@ -36,6 +37,10 @@ type IncomeRecord = {
   note: string | null
   created_by: string
   created_at: string
+  source_type?: string | null
+  source_id?: string | null
+  source_currency?: string | null
+  source_amount?: number | null
 }
 
 type ExpenseRecord = {
@@ -52,6 +57,8 @@ type ExpenseRecord = {
   reviewed_at: string | null
   rejection_reason: string | null
   created_at: string
+  source_type?: string | null
+  source_id?: string | null
 }
 
 type AttendanceStatus = 'present' | 'absent' | 'half_day' | 'leave'
@@ -237,6 +244,55 @@ function safeFilePart(value: string) {
     .replace(/^_+|_+$/g, '') || 'employee'
 }
 
+const PAYSLIP_SINHALA: Record<string, string> = {
+  'EMPLOYEE PAYSLIP': 'සේවක වැටුප් පත්‍රය',
+  'Employee': 'සේවකයා',
+  'Email': 'ඊමේල්',
+  'Job title': 'රැකියා තනතුර',
+  'Pay period': 'වැටුප් කාලය',
+  'Attendance summary': 'පැමිණීමේ සාරාංශය',
+  'Working days': 'වැඩ කරන දින',
+  'Present': 'පැමිණි දින',
+  'Half days': 'අර්ධ දින',
+  'Absent': 'නොපැමිණි දින',
+  'Leave': 'නිවාඩු',
+  'Earnings': 'ආදායම්',
+  'Deductions': 'අඩු කිරීම්',
+  'Basic salary': 'මූලික වැටුප',
+  'Bonus': 'ප්‍රසාද දීමනාව',
+  'Allowance': 'දීමනා',
+  'Gross earnings': 'මුළු ආදායම',
+  'Other deductions': 'වෙනත් අඩු කිරීම්',
+  'Salary advance': 'වැටුප් අත්තිකාරම',
+  'Other': 'වෙනත්',
+  'Total deductions': 'මුළු අඩු කිරීම්',
+  'NET SALARY': 'ශුද්ධ වැටුප',
+  'PAYROLL NOTE': 'වැටුප් සටහන',
+  'Gross': 'දළ ආදායම',
+  'Authorized by': 'අනුමත කළේ',
+  'Generated': 'සකස් කළ දිනය',
+  'Paid': 'ගෙවා ඇත',
+  'Status': 'තත්ත්වය',
+  'Finalized': 'අවසන් කර ඇත',
+  'Draft': 'කෙටුම්පත',
+  'Not set': 'සඳහන් කර නැත',
+}
+
+function payslipLabel(value: string, language: AppLanguage) {
+  return language === 'si' ? PAYSLIP_SINHALA[value] || value : value
+}
+
+function payslipStatus(value: string, language: AppLanguage) {
+  const readable = value
+    .trim()
+    .toLowerCase()
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+  return payslipLabel(readable, language)
+}
+
 async function createPayslipPdfBlob(
   payroll: PayrollRecord,
   employee: Profile,
@@ -246,6 +302,7 @@ async function createPayslipPdfBlob(
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const margin = 16
+  const language: AppLanguage = employee.preferred_language === 'si' ? 'si' : 'en'
   let logo: string | null = null
 
   try {
@@ -255,9 +312,9 @@ async function createPayslipPdfBlob(
   }
 
   let y = addPremiumPdfHeader(doc, {
-    title: 'EMPLOYEE PAYSLIP',
+    title: payslipLabel('EMPLOYEE PAYSLIP', language),
     subtitle: formatMonth(payroll.period_start),
-    status: payroll.status,
+    status: payslipStatus(payroll.status, language),
     logoDataUrl: logo,
   })
 
@@ -271,15 +328,15 @@ async function createPayslipPdfBlob(
     {
       x: margin + 7,
       rows: [
-        ['Employee', employee.full_name || employee.email || 'Team member'],
-        ['Email', employee.email || 'Not set'],
+        [payslipLabel('Employee', language), employee.full_name || employee.email || 'Team member'],
+        [payslipLabel('Email', language), employee.email || payslipLabel('Not set', language)],
       ],
     },
     {
       x: pageWidth / 2 + 4,
       rows: [
-        ['Job title', employee.job_title || 'Not set'],
-        ['Pay period', formatMonth(payroll.period_start)],
+        [payslipLabel('Job title', language), employee.job_title || payslipLabel('Not set', language)],
+        [payslipLabel('Pay period', language), formatMonth(payroll.period_start)],
       ],
     },
   ]
@@ -290,28 +347,28 @@ async function createPayslipPdfBlob(
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(7.5)
       doc.setTextColor(...PDF_BRAND.muted)
-      doc.text(label.toUpperCase(), column.x, rowY)
+      drawPdfText(doc, label, column.x, rowY, { fontSize: 7.5, bold: true, color: PDF_BRAND.muted, maxWidth: 72 })
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(10)
       doc.setTextColor(...PDF_BRAND.ink)
-      const safeValue = doc.splitTextToSize(String(value), 72)[0] || 'Not set'
-      doc.text(safeValue, column.x, rowY + 5)
+      const safeValue = String(value || payslipLabel('Not set', language))
+      drawPdfText(doc, safeValue, column.x, rowY + 5, { fontSize: 10, bold: true, color: PDF_BRAND.ink, maxWidth: 72, maxLines: 1 })
     })
   })
   y += 44
 
-  drawPdfSectionTitle(doc, 'Attendance summary', y)
+  drawPdfSectionTitle(doc, payslipLabel('Attendance summary', language), y)
   y += 8
   doc.setFillColor(...PDF_BRAND.white)
   doc.setDrawColor(...PDF_BRAND.line)
   doc.roundedRect(margin, y, cardWidth, 31, 2.5, 2.5, 'FD')
 
   const attendanceItems = [
-    ['Working days', payroll.working_days],
-    ['Present', payroll.present_days],
-    ['Half days', payroll.half_day_days],
-    ['Absent', payroll.absent_days],
-    ['Leave', payroll.leave_days],
+    [payslipLabel('Working days', language), payroll.working_days],
+    [payslipLabel('Present', language), payroll.present_days],
+    [payslipLabel('Half days', language), payroll.half_day_days],
+    [payslipLabel('Absent', language), payroll.absent_days],
+    [payslipLabel('Leave', language), payroll.leave_days],
   ]
   const attendanceColumnWidth = cardWidth / attendanceItems.length
   attendanceItems.forEach(([label, value], index) => {
@@ -324,7 +381,7 @@ async function createPayslipPdfBlob(
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(...PDF_BRAND.muted)
-    doc.text(String(label), centerX, y + 10, { align: 'center' })
+    drawPdfText(doc, String(label), centerX, y + 10, { align: 'center', fontSize: 7.5, color: PDF_BRAND.muted, maxWidth: attendanceColumnWidth - 3 })
     doc.setFont('times', 'bold')
     doc.setFontSize(15)
     doc.setTextColor(...PDF_BRAND.ink)
@@ -335,8 +392,8 @@ async function createPayslipPdfBlob(
   const gap = 8
   const blockWidth = (cardWidth - gap) / 2
   const rightX = margin + blockWidth + gap
-  drawPdfSectionTitle(doc, 'Earnings', y, margin, blockWidth)
-  drawPdfSectionTitle(doc, 'Deductions', y, rightX, blockWidth)
+  drawPdfSectionTitle(doc, payslipLabel('Earnings', language), y, margin, blockWidth)
+  drawPdfSectionTitle(doc, payslipLabel('Deductions', language), y, rightX, blockWidth)
   y += 8
 
   function drawMoneyCard(
@@ -354,7 +411,7 @@ async function createPayslipPdfBlob(
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(8.5)
       doc.setTextColor(...PDF_BRAND.muted)
-      doc.text(label, x + 6, rowY)
+      drawPdfText(doc, label, x + 6, rowY, { fontSize: 8.5, color: PDF_BRAND.muted, maxWidth: blockWidth * 0.52 })
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(...PDF_BRAND.ink)
       const prefix = negative && amount ? '-' : ''
@@ -366,7 +423,7 @@ async function createPayslipPdfBlob(
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8.5)
     doc.setTextColor(...PDF_BRAND.darkGold)
-    doc.text(totalLabel, x + 6, y + 40)
+    drawPdfText(doc, totalLabel, x + 6, y + 40, { fontSize: 8.5, bold: true, color: PDF_BRAND.darkGold, maxWidth: blockWidth * 0.52 })
     doc.text(formatCurrency(total, payroll.currency), x + blockWidth - 6, y + 40, { align: 'right' })
   }
 
@@ -375,21 +432,21 @@ async function createPayslipPdfBlob(
   drawMoneyCard(
     margin,
     [
-      ['Basic salary', Number(payroll.basic_salary)],
-      ['Bonus', Number(payroll.bonus)],
-      ['Allowance', Number(payroll.allowance)],
+      [payslipLabel('Basic salary', language), Number(payroll.basic_salary)],
+      [payslipLabel('Bonus', language), Number(payroll.bonus)],
+      [payslipLabel('Allowance', language), Number(payroll.allowance)],
     ],
-    'Gross earnings',
+    payslipLabel('Gross earnings', language),
     gross,
   )
   drawMoneyCard(
     rightX,
     [
-      ['Other deductions', Number(payroll.deductions), true],
-      ['Salary advance', Number(payroll.advance), true],
-      ['Other', 0, true],
+      [payslipLabel('Other deductions', language), Number(payroll.deductions), true],
+      [payslipLabel('Salary advance', language), Number(payroll.advance), true],
+      [payslipLabel('Other', language), 0, true],
     ],
-    'Total deductions',
+    payslipLabel('Total deductions', language),
     totalDeductions,
   )
   y += 56
@@ -401,7 +458,7 @@ async function createPayslipPdfBlob(
   doc.setTextColor(...PDF_BRAND.darkGold)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9)
-  doc.text('NET SALARY', margin + 8, y + 10)
+  drawPdfText(doc, payslipLabel('NET SALARY', language), margin + 8, y + 10, { fontSize: 9, bold: true, color: PDF_BRAND.darkGold, maxWidth: 75 })
   doc.setFont('times', 'bold')
   doc.setFontSize(21)
   doc.setTextColor(...PDF_BRAND.ink)
@@ -409,27 +466,32 @@ async function createPayslipPdfBlob(
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(...PDF_BRAND.muted)
-  doc.text(`Gross ${formatCurrency(gross, payroll.currency)} | Deductions ${formatCurrency(totalDeductions, payroll.currency)}`, margin + 8, y + 20)
+  drawPdfText(
+    doc,
+    `${payslipLabel('Gross', language)} ${formatCurrency(gross, payroll.currency)} | ${payslipLabel('Deductions', language)} ${formatCurrency(totalDeductions, payroll.currency)}`,
+    margin + 8,
+    y + 20,
+    { fontSize: 7.5, color: PDF_BRAND.muted, maxWidth: cardWidth - 16 },
+  )
   y += 40
 
   if (payroll.notes) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     doc.setTextColor(...PDF_BRAND.darkGold)
-    doc.text('PAYROLL NOTE', margin, y)
+    drawPdfText(doc, payslipLabel('PAYROLL NOTE', language), margin, y, { fontSize: 8, bold: true, color: PDF_BRAND.darkGold })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...PDF_BRAND.muted)
-    const noteLines = doc.splitTextToSize(payroll.notes, cardWidth).slice(0, 3)
-    doc.text(noteLines, margin, y + 6)
+    drawPdfText(doc, payroll.notes, margin, y + 6, { fontSize: 8, color: PDF_BRAND.muted, maxWidth: cardWidth, lineHeight: 3.6, maxLines: 3 })
   }
 
   addPremiumPdfFooter(doc, {
-    leftTop: `Authorized by: ${authorizedBy || 'Aroma Ceylon Administrator'}`,
-    leftBottom: `Generated: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`,
+    leftTop: `${payslipLabel('Authorized by', language)}: ${authorizedBy || 'Aroma Ceylon Administrator'}`,
+    leftBottom: `${payslipLabel('Generated', language)}: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`,
     rightTop: payroll.paid_at
-      ? `Paid: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(payroll.paid_at))}`
-      : `Status: ${payroll.status.toUpperCase()}`,
+      ? `${payslipLabel('Paid', language)}: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(payroll.paid_at))}`
+      : `${payslipLabel('Status', language)}: ${payslipStatus(payroll.status, language)}`,
   })
 
   // Keep a clean white page through the footer and avoid accidental overflow.
@@ -542,10 +604,18 @@ function StatusBadge({ status }: { status: ExpenseStatus }) {
 
 
 function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
+  const [language, setLanguage] = useState<AppLanguage>(() => localStorage.getItem('aroma-login-language') === 'si' ? 'si' : 'en')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+
+  useAutoTranslate(language)
+
+  function changeAuthLanguage(next: AppLanguage) {
+    setLanguage(next)
+    localStorage.setItem('aroma-login-language', next)
+  }
 
   async function savePassword(event: FormEvent) {
     event.preventDefault()
@@ -576,6 +646,13 @@ function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
   return (
     <main className="auth-page">
       <section className="auth-card">
+        <label className="auth-language-select">
+          <span>{t('Language', language)}</span>
+          <select value={language} onChange={(event) => changeAuthLanguage(event.target.value as AppLanguage)}>
+            <option value="en">English</option>
+            <option value="si">සිංහල</option>
+          </select>
+        </label>
         <img className="brand-logo" src="/aroma-logo.png" alt="Aroma Ceylon" />
         <div className="brand-divider" />
         <p className="eyebrow">EMPLOYEE INVITATION</p>
@@ -616,10 +693,18 @@ function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
 }
 
 function LoginScreen() {
+  const [language, setLanguage] = useState<AppLanguage>(() => localStorage.getItem('aroma-login-language') === 'si' ? 'si' : 'en')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+
+  useAutoTranslate(language)
+
+  function changeAuthLanguage(next: AppLanguage) {
+    setLanguage(next)
+    localStorage.setItem('aroma-login-language', next)
+  }
 
   async function login(event: FormEvent) {
     event.preventDefault()
@@ -634,6 +719,13 @@ function LoginScreen() {
   return (
     <main className="auth-page">
       <section className="auth-card">
+        <label className="auth-language-select">
+          <span>{t('Language', language)}</span>
+          <select value={language} onChange={(event) => changeAuthLanguage(event.target.value as AppLanguage)}>
+            <option value="en">English</option>
+            <option value="si">සිංහල</option>
+          </select>
+        </label>
         <img className="brand-logo" src="/aroma-logo.png" alt="Aroma Ceylon" />
         <div className="brand-divider" />
         <p className="eyebrow">BUSINESS MANAGEMENT</p>
@@ -1408,7 +1500,7 @@ function TransactionsPanel({
           ) : (
             <div className="record-list">
               {sortedExpenses.map((item) => {
-                const canChange = isAdmin || (item.submitted_by === profile.id && item.status === 'pending')
+                const canChange = !item.source_type && (isAdmin || (item.submitted_by === profile.id && item.status === 'pending'))
                 return (
                   <article className="record-card compact" key={item.id}>
                     <div className="record-main">
@@ -1452,15 +1544,16 @@ function TransactionsPanel({
                 <article className="record-card compact" key={item.id}>
                   <div className="record-main">
                     <strong>{item.store_name}</strong>
-                    <p>{formatDate(item.received_date)} • {formatEUR(item.amount_eur)} × {Number(item.exchange_rate).toFixed(4)}</p>
+                    <p>{formatDate(item.received_date)} • {item.source_currency && item.source_amount != null ? formatCurrency(Number(item.source_amount), item.source_currency) : `${formatEUR(item.amount_eur)} × ${Number(item.exchange_rate).toFixed(4)}`}</p>
                     {item.note && <p className="record-note">{item.note}</p>}
+                    {item.source_type && <span className="gold-pill">Automatic</span>}
                   </div>
                   <div className="record-side">
                     <strong className="income-value">+{formatLKR(item.amount_lkr)}</strong>
-                    <div className="record-actions">
+                    {!item.source_type && <div className="record-actions">
                       <button className="edit-button" onClick={() => setEditing({ kind: 'income', record: item })}>Edit</button>
                       <button className="delete-button" disabled={busyId === item.id} onClick={() => deleteIncome(item)}>Delete</button>
-                    </div>
+                    </div>}
                   </div>
                 </article>
               ))}
@@ -1806,12 +1899,16 @@ function EmployeeHome({
   attendance,
   payrolls,
   onOpen,
+  language,
+  unreadMessages,
 }: {
   profile: Profile
   expenses: ExpenseRecord[]
   attendance: AttendanceRecord[]
   payrolls: PayrollRecord[]
   onOpen: (view: View) => void
+  language: AppLanguage
+  unreadMessages: number
 }) {
   const month = currentMonthValue()
   const currentAttendance = attendance.filter((item) => item.work_date.startsWith(month))
@@ -1821,11 +1918,12 @@ function EmployeeHome({
   const latestPayslip = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))[0]
 
   const actions: { view: View; title: string; copy: string; icon: string; badge?: string }[] = [
-    { view: 'expense', title: 'Submit expense', copy: 'Add a business expense and optional bill photo.', icon: '+' },
-    { view: 'transactions', title: 'My expenses', copy: 'Track pending, approved and rejected submissions.', icon: '≡', badge: pending ? String(pending) : undefined },
-    { view: 'attendance', title: 'My attendance', copy: `This month: ${present} present, ${halfDays} half day.`, icon: '✓' },
-    { view: 'payslips', title: 'My payslips', copy: latestPayslip ? `${formatMonth(latestPayslip.period_start)} is available.` : 'Monthly salary records will appear here.', icon: '€' },
-    { view: 'profile', title: 'My profile', copy: 'View your job, contact and salary details.', icon: '◉' },
+    { view: 'expense', title: t('Submit expense', language), copy: t('Add a business expense and optional bill photo.', language), icon: '+' },
+    { view: 'transactions', title: t('My expenses', language), copy: t('Track pending, approved and rejected submissions.', language), icon: '≡', badge: pending ? String(pending) : undefined },
+    { view: 'attendance', title: t('My attendance', language), copy: language === 'si' ? `මේ මාසයේ: පැමිණි දින ${present}, අර්ධ දින ${halfDays}.` : `This month: ${present} present, ${halfDays} half day.`, icon: '✓' },
+    { view: 'payslips', title: t('My payslips', language), copy: latestPayslip ? (language === 'si' ? `${formatMonth(latestPayslip.period_start)} වැටුප් පත්‍රය ලබාගත හැක.` : `${formatMonth(latestPayslip.period_start)} is available.`) : t('Monthly salary records will appear here.', language), icon: '€' },
+    { view: 'messages', title: t('Contact admin', language), copy: t('Send a private message, suggestion, complaint or request.', language), icon: '✉', badge: unreadMessages ? String(unreadMessages) : undefined },
+    { view: 'profile', title: t('My profile', language), copy: t('View your job, contact and salary details.', language), icon: '◉' },
   ]
 
   return (
@@ -1869,7 +1967,7 @@ function EmployeeHome({
   )
 }
 
-function ProfilePanel({ profile, onBack }: { profile: Profile; onBack?: () => void }) {
+function ProfilePanel({ profile, onBack, onContactAdmin }: { profile: Profile; onBack?: () => void; onContactAdmin?: () => void }) {
   const details = [
     ['Full name', profile.full_name || 'Not set'],
     ['Email', profile.email || 'Not set'],
@@ -1899,6 +1997,11 @@ function ProfilePanel({ profile, onBack }: { profile: Profile; onBack?: () => vo
             </div>
           ))}
         </div>
+        {onContactAdmin && (
+          <button className="primary-button profile-contact-button" type="button" onClick={onContactAdmin}>
+            Contact admin
+          </button>
+        )}
       </section>
     </div>
   )
@@ -2206,26 +2309,59 @@ function PayrollManager({
     setBusy(true)
     setMessage('')
     setError('')
+    let paidSaved = false
     try {
       const paidAt = new Date().toISOString()
       const paidRecord = { ...selectedPayroll, status: 'paid' as PayrollStatus, paid_at: paidAt }
       const pdfBlob = await createPayslipPdfBlob(paidRecord, selectedEmployee, profile.full_name || profile.email || 'Administrator')
       const pdfPath = selectedPayroll.payslip_path || `${selectedEmployee.id}/${periodStart}.pdf`
-      const { error: uploadError } = await supabase.storage
-        .from('payslips')
-        .upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true })
-      if (uploadError) throw uploadError
 
       const { error: updateError } = await supabase
         .from('payrolls')
         .update({ status: 'paid', paid_at: paidAt, payslip_path: pdfPath })
         .eq('id', selectedPayroll.id)
       if (updateError) throw updateError
+      paidSaved = true
 
-      setMessage('Salary marked as paid and the PDF was refreshed.')
+      const { error: uploadError } = await supabase.storage
+        .from('payslips')
+        .upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true })
+      if (uploadError) throw uploadError
+
+      setMessage('Salary marked as paid, added to approved expenses and the PDF was refreshed.')
       onChanged()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to mark salary as paid.')
+      if (paidSaved) {
+        setError(`Salary was marked as paid and accounting was updated, but the PDF needs a refresh: ${caught instanceof Error ? caught.message : 'PDF upload failed.'}`)
+        onChanged()
+      } else {
+        setError(caught instanceof Error ? caught.message : 'Unable to mark salary as paid.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshPayslip() {
+    if (!selectedEmployee || !selectedPayroll || selectedPayroll.status === 'draft') return
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try {
+      const pdfBlob = await createPayslipPdfBlob(selectedPayroll, selectedEmployee, profile.full_name || profile.email || 'Administrator')
+      const pdfPath = selectedPayroll.payslip_path || `${selectedEmployee.id}/${periodStart}.pdf`
+      const { error: uploadError } = await supabase.storage
+        .from('payslips')
+        .upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true })
+      if (uploadError) throw uploadError
+      if (selectedPayroll.payslip_path !== pdfPath) {
+        const { error: updateError } = await supabase.from('payrolls').update({ payslip_path: pdfPath }).eq('id', selectedPayroll.id)
+        if (updateError) throw updateError
+      }
+      setMessage('Payslip PDF refreshed with the current premium design and employee language.')
+      onChanged()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to refresh the payslip PDF.')
     } finally {
       setBusy(false)
     }
@@ -2397,6 +2533,7 @@ function PayrollManager({
                   <button className="primary-button" type="button" disabled={!selectedPayroll.payslip_path || downloadingId === selectedPayroll.id} onClick={() => download(selectedPayroll, selectedEmployee)}>
                     {downloadingId === selectedPayroll.id ? 'Preparing…' : 'Download PDF'}
                   </button>
+                  <button className="small-button" type="button" disabled={busy} onClick={refreshPayslip}>{busy ? 'Updating…' : 'Refresh PDF'}</button>
                   {selectedPayroll.status === 'finalized' && <button className="success-button small-button" type="button" disabled={busy} onClick={markPaid}>{busy ? 'Updating…' : 'Mark paid'}</button>}
                   <button className="outline-light-button" type="button" disabled={busy} onClick={reopenDraft}>Reopen draft</button>
                 </div>
@@ -2744,6 +2881,8 @@ function ProductManager({
     if (!values.name.trim() || !values.sku.trim()) return 'Product name and SKU are required.'
     if (Number(values.selling_price) < 0 || values.selling_price === '') return 'Enter a valid selling price.'
     if (values.cost_price && Number(values.cost_price) < 0) return 'Cost price cannot be negative.'
+    if (!Number.isFinite(Number(values.stock_quantity || 0)) || Number(values.stock_quantity || 0) < 0) return 'Stock cannot be negative.'
+    if (!Number.isFinite(Number(values.reorder_level || 0)) || Number(values.reorder_level || 0) < 0) return 'Reorder level cannot be negative.'
     return ''
   }
 
@@ -2864,7 +3003,6 @@ function ProductManager({
           selling_price: Number(editForm.selling_price),
           cost_price: editForm.cost_price ? Number(editForm.cost_price) : null,
           currency: editForm.currency,
-          stock_quantity: Number(editForm.stock_quantity || 0),
           reorder_level: Number(editForm.reorder_level || 0),
           description: editForm.description.trim() || null,
           photo_path: nextPhotoPath,
@@ -2908,6 +3046,7 @@ function ProductManager({
   const formFields = (
     values: typeof emptyForm,
     setValues: Dispatch<SetStateAction<typeof emptyForm>>,
+    isEditing = false,
   ) => (
     <>
       <label>
@@ -2944,8 +3083,9 @@ function ProductManager({
         </select>
       </label>
       <label>
-        Opening / current stock
-        <input type="number" min="0" step="0.001" value={values.stock_quantity} onChange={(event) => setValues((current) => ({ ...current, stock_quantity: event.target.value }))} />
+        {isEditing ? 'Current stock' : 'Opening stock'}
+        <input type="number" min="0" step="0.001" value={values.stock_quantity} disabled={isEditing} onChange={(event) => setValues((current) => ({ ...current, stock_quantity: event.target.value }))} />
+        {isEditing && <small className="field-help">Use Inventory → Stock adjustment so every change is recorded.</small>}
       </label>
       <label>
         Reorder level
@@ -3028,6 +3168,7 @@ function ProductManager({
                   </div>
                   <p>{product.category}{product.pack_size ? ` • ${product.pack_size}` : ''}</p>
                   {product.description && <p className="product-description">{product.description}</p>}
+                  <div className="product-stock-line"><span>Stock</span><strong>{Number(product.stock_quantity || 0).toFixed(3)}</strong><small>Reorder: {Number(product.reorder_level || 0).toFixed(3)}</small></div>
                   <div className="product-prices">
                     <div><span>Selling</span><strong>{formatCurrency(Number(product.selling_price || 0), product.currency)}</strong></div>
                     <div><span>Cost</span><strong>{product.cost_price === null ? '—' : formatCurrency(Number(product.cost_price), product.currency)}</strong></div>
@@ -3057,7 +3198,7 @@ function ProductManager({
               <button className="icon-close" type="button" onClick={() => setEditing(null)} aria-label="Close">×</button>
             </div>
             <form className="product-form" onSubmit={saveProduct}>
-              {formFields(editForm, setEditForm)}
+              {formFields(editForm, setEditForm, true)}
               <label className="upload-field product-photo-field">
                 Replace product photo
                 <input type="file" accept="image/*" onChange={(event) => setReplacementPhoto(event.target.files?.[0] || null)} />
@@ -3266,6 +3407,7 @@ function ShopManager({
   const formFields = (
     values: typeof emptyForm,
     setValues: Dispatch<SetStateAction<typeof emptyForm>>,
+    isEditing = false,
   ) => (
     <>
       <label>
@@ -3426,8 +3568,8 @@ function ShopManager({
                   {shop.notes && <p className="shop-notes">{shop.notes}</p>}
 
                   <div className="shop-future-strip">
-                    <span>Invoices</span><strong>Next module</strong>
-                    <span>Payments</span><strong>Next module</strong>
+                    <span>Invoices & deliveries</span><strong>Available in Sales</strong>
+                    <span>Payments</span><strong>Tracked in Sales</strong>
                   </div>
 
                   <div className="shop-actions">
@@ -3455,7 +3597,7 @@ function ShopManager({
               <button className="icon-close" type="button" onClick={() => setEditing(null)} aria-label="Close">×</button>
             </div>
             <form className="shop-form" onSubmit={saveShop}>
-              {formFields(editForm, setEditForm)}
+              {formFields(editForm, setEditForm, true)}
               <div className="modal-actions shop-modal-actions">
                 <button className="outline-light-button" type="button" onClick={() => setEditing(null)}>Cancel</button>
                 <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save shop'}</button>
@@ -3484,7 +3626,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [dataError, setDataError] = useState('')
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [language, setLanguage] = useState<AppLanguage>(() => {
-    const saved = localStorage.getItem('aroma-language')
+    const saved = localStorage.getItem(`aroma-language-${profile.id}`)
     if (saved === 'si' || saved === 'en') return saved
     return profile.preferred_language === 'si' ? 'si' : 'en'
   })
@@ -3492,7 +3634,7 @@ function Dashboard({ profile }: { profile: Profile }) {
 
   async function changeLanguage(nextLanguage: AppLanguage) {
     setLanguage(nextLanguage)
-    localStorage.setItem('aroma-language', nextLanguage)
+    localStorage.setItem(`aroma-language-${profile.id}`, nextLanguage)
     const { error } = await supabase.rpc('set_my_language', { p_language: nextLanguage })
     if (error) setDataError(error.message)
   }
@@ -3600,6 +3742,15 @@ function Dashboard({ profile }: { profile: Profile }) {
     loadUnreadMessages()
   }, [loadUnreadMessages, activeView])
 
+  useEffect(() => {
+    const channel = supabase
+      .channel(`aroma-unread-${profile.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_recipients' }, loadUnreadMessages)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'thread_messages' }, loadUnreadMessages)
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [loadUnreadMessages, profile.id])
+
   const profileNames = useMemo(() => {
     const map = new Map<string, string>()
     profiles.forEach((item) => map.set(item.id, item.full_name || item.email || 'User'))
@@ -3644,7 +3795,6 @@ function Dashboard({ profile }: { profile: Profile }) {
       ]
     : [
         { view: 'dashboard', label: 'Home' },
-        { view: 'messages', label: 'Messages' },
       ]
 
   const employeeBack = isAdmin ? undefined : () => setActiveView('dashboard')
@@ -3678,7 +3828,7 @@ function Dashboard({ profile }: { profile: Profile }) {
             className={activeView === item.view ? 'active' : ''}
             onClick={() => setActiveView(item.view)}
           >
-            {item.label}
+            {t(item.label, language)}
             {item.view === 'approvals' && totals.pendingCount > 0 && <span>{totals.pendingCount}</span>}
             {item.view === 'messages' && unreadMessages > 0 && <span>{unreadMessages}</span>}
           </button>
@@ -3702,15 +3852,15 @@ function Dashboard({ profile }: { profile: Profile }) {
                 <article className="finance-card income-card">
                   <span>Total income</span>
                   <strong>{formatLKR(totals.totalIncome)}</strong>
-                  <small>Confirmed EUR payments converted to LKR</small>
+                  <small>Confirmed payments converted to LKR</small>
                 </article>
                 <article className="finance-card expense-card">
                   <span>Approved expenses</span>
                   <strong>{formatLKR(totals.approvedExpenses)}</strong>
-                  <small>Only approved expenses affect profit</small>
+                  <small>Only approved expenses affect cash profit</small>
                 </article>
                 <article className={`finance-card net-card ${totals.net < 0 ? 'loss' : 'gain'}`}>
-                  <span>Net profit / loss</span>
+                  <span>Cash profit / loss</span>
                   <strong>{totals.net >= 0 ? '+' : '−'}{formatLKR(Math.abs(totals.net))}</strong>
                   <small>{totals.net >= 0 ? 'Current profit' : 'Current loss'}</small>
                 </article>
@@ -3725,7 +3875,7 @@ function Dashboard({ profile }: { profile: Profile }) {
             loadingData ? (
               <div className="content-card empty-state">Loading your workspace…</div>
             ) : (
-              <EmployeeHome profile={profile} expenses={expenses} attendance={attendance} payrolls={payrolls} onOpen={setActiveView} />
+              <EmployeeHome profile={profile} expenses={expenses} attendance={attendance} payrolls={payrolls} onOpen={setActiveView} language={language} unreadMessages={unreadMessages} />
             )
           )
         )}
@@ -3812,7 +3962,10 @@ function Dashboard({ profile }: { profile: Profile }) {
           loadingData ? (
             <div className="content-card empty-state">Loading messages…</div>
           ) : (
-            <MessagesCenter profile={profile} profiles={profiles} language={language} />
+            <div className="stacked-sections">
+              {employeeBack && <EmployeeBackButton onBack={employeeBack} />}
+              <MessagesCenter profile={profile} profiles={profiles} language={language} onUnreadChanged={loadUnreadMessages} />
+            </div>
           )
         )}
         {activeView === 'inventory' && isAdmin && (
@@ -3836,7 +3989,7 @@ function Dashboard({ profile }: { profile: Profile }) {
             <PayslipsPanel profile={profile} payrolls={payrolls} onBack={employeeBack} />
           )
         )}
-        {activeView === 'profile' && !isAdmin && <ProfilePanel profile={profile} onBack={employeeBack} />}
+        {activeView === 'profile' && !isAdmin && <ProfilePanel profile={profile} onBack={employeeBack} onContactAdmin={() => setActiveView('messages')} />}
       </main>
     </div>
   )
@@ -3876,7 +4029,7 @@ export default function App() {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency')
+        .select('id, full_name, email, role, active, job_title, phone, monthly_salary, salary_currency, preferred_language')
         .eq('id', session.user.id)
         .single()
 

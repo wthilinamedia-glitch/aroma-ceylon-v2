@@ -1,4 +1,5 @@
 import type { jsPDF } from 'jspdf'
+import { drawPdfText } from './pdfText'
 
 export const PDF_BRAND = {
   gold: [184, 132, 31] as [number, number, number],
@@ -26,7 +27,7 @@ export async function loadPdfLogoDataUrl(url = '/aroma-logo.png') {
 
 function statusStyle(status: string) {
   const normalized = status.trim().toLowerCase()
-  if (normalized === 'paid') {
+  if (normalized === 'paid' || normalized === 'ගෙවා ඇත' || normalized.includes('ලැබී ඇත')) {
     return {
       fill: [229, 242, 231] as [number, number, number],
       stroke: [80, 132, 83] as [number, number, number],
@@ -34,7 +35,7 @@ function statusStyle(status: string) {
     }
   }
 
-  if (normalized === 'overdue' || normalized === 'unpaid') {
+  if (normalized === 'overdue' || normalized === 'unpaid' || normalized === 'ගෙවීම් කල් ඉකුත්' || normalized === 'ගෙවා නැත') {
     return {
       fill: [250, 233, 229] as [number, number, number],
       stroke: [169, 79, 58] as [number, number, number],
@@ -58,7 +59,12 @@ export function drawPdfStatusPill(
   const label = status.trim().toUpperCase() || 'DRAFT'
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
-  const width = Math.max(24, doc.getTextWidth(label) + 10)
+  const width = Math.max(
+    24,
+    /[^\u0000-\u024f]/.test(label)
+      ? Math.min(72, Math.max(30, label.length * 2.35 + 10))
+      : doc.getTextWidth(label) + 10,
+  )
   const style = statusStyle(status)
 
   doc.setFillColor(...style.fill)
@@ -66,7 +72,7 @@ export function drawPdfStatusPill(
   doc.setLineWidth(0.35)
   doc.roundedRect(rightX - width, topY, width, 7.5, 3.75, 3.75, 'FD')
   doc.setTextColor(...style.text)
-  doc.text(label, rightX - width / 2, topY + 5.1, { align: 'center' })
+  drawPdfText(doc, label, rightX - width / 2, topY + 5.1, { align: 'center', fontSize: 8, bold: true, color: style.text })
 
   return width
 }
@@ -110,12 +116,12 @@ export function addPremiumPdfHeader(
   doc.setTextColor(...PDF_BRAND.ink)
   doc.setFont('times', 'bold')
   doc.setFontSize(20)
-  doc.text(options.title, right, 19, { align: 'right' })
+  drawPdfText(doc, options.title, right, 19, { align: 'right', fontSize: 20, bold: true, color: PDF_BRAND.ink, maxWidth: 108 })
 
   doc.setTextColor(...PDF_BRAND.muted)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
-  doc.text(options.subtitle, right, 27, { align: 'right' })
+  drawPdfText(doc, options.subtitle, right, 27, { align: 'right', fontSize: 9, color: PDF_BRAND.muted, maxWidth: 108 })
 
   if (options.status) drawPdfStatusPill(doc, options.status, right, 32)
 
@@ -133,7 +139,7 @@ export function drawPdfSectionTitle(doc: jsPDF, title: string, y: number, x = 16
   doc.setTextColor(...PDF_BRAND.ink)
   doc.setFont('times', 'bold')
   doc.setFontSize(12.5)
-  doc.text(title, x, y)
+  drawPdfText(doc, title, x, y, { fontSize: 12.5, bold: true, color: PDF_BRAND.ink, maxWidth: lineWidth })
   doc.setDrawColor(...PDF_BRAND.gold)
   doc.setLineWidth(0.45)
   doc.line(x, y + 3, x + lineWidth, y + 3)
@@ -158,11 +164,11 @@ export function addPremiumPdfFooter(
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(...PDF_BRAND.muted)
-  doc.text(options.leftTop, margin, pageHeight - 20)
-  doc.text(options.leftBottom, margin, pageHeight - 14)
+  drawPdfText(doc, options.leftTop, margin, pageHeight - 20, { fontSize: 7.5, color: PDF_BRAND.muted, maxWidth: 95 })
+  drawPdfText(doc, options.leftBottom, margin, pageHeight - 14, { fontSize: 7.5, color: PDF_BRAND.muted, maxWidth: 95 })
 
   if (options.rightTop) {
-    doc.text(options.rightTop, pageWidth - margin, pageHeight - 20, { align: 'right' })
+    drawPdfText(doc, options.rightTop, pageWidth - margin, pageHeight - 20, { align: 'right', fontSize: 7.5, color: PDF_BRAND.muted, maxWidth: 80 })
   }
 
   doc.setFont('helvetica', 'bold')

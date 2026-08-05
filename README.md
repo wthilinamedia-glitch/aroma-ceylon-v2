@@ -1,95 +1,36 @@
-# Aroma Ceylon Business App V2 — Income & Expenses Update
+# Aroma Ceylon Business App V2 — Stable Complete Upgrade
 
-This package adds:
+This release is based on the uploaded `aroma-ceylon-v2-8` stable build. It preserves the existing authentication, income, expenses, employees, attendance, payroll, products, shops and sales flows, then adds the agreed upgrade without replacing those working foundations.
 
-- Admin income entry in EUR
-- Date-specific EUR → LKR rate lookup with manual override
-- Supabase-generated LKR income value
-- Expense submission for admin and regular users
-- Pending / approved / rejected workflow
-- Admin approval and rejection controls
-- Profit/loss dashboard using approved expenses only
-- Private bill-photo uploads
-- Client-side bill image compression before upload
-- Signed private bill viewing links
-- Mobile navigation and PWA-friendly UI
+## Included modules
 
-## Required database step
+- Supabase authentication and role-based access
+- Admin income and employee expense approvals
+- Employees, attendance and private payroll/payslips
+- Product catalogue and private product images
+- Shops/customers with automatic shop codes
+- Sales, deliveries, invoices and private PDFs
+- Partial/full payments and automatic income synchronization
+- Paid payroll and refund synchronization to approved expenses
+- Protected inventory, stock movements and low-stock warnings
+- Credit notes, partial product returns and refunds
+- Monthly sales, outstanding, inventory and gross-profit reports
+- Employee ↔ Admin named messages, attachments and replies
+- Private, selected-employee and all-employee announcements
+- English / සිංහල interface preference
+- White + gold premium PDF family for payslips, invoices, delivery notes, receipts and credit notes
 
-Run `02_expense_bill_storage.sql` once in Supabase SQL Editor before testing bill uploads.
+## Upgrade database step
 
-## GitHub update
+Run `10_STABLE_COMPLETE_UPGRADE_PATCH.sql` once in Supabase SQL Editor **before** deploying this package. See `10_STABLE_COMPLETE_UPGRADE_SETUP.md` for the safe order and the note about older EUR records.
 
-Replace the existing V2 repository files with the contents of this project folder and commit. Netlify will deploy automatically.
+## Deployment
 
-Your existing Netlify environment variables remain unchanged:
+Replace the repository files with the contents of this project folder and commit. Netlify will build and deploy automatically.
+
+Required existing Netlify variables:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Never add a Supabase secret key or service-role key to this frontend repository.
-
-
-## V2.1 transaction controls
-
-- Admin can edit or delete any income or expense transaction.
-- Team members can edit or delete only their own pending expenses.
-- Expense bill files are removed from private Storage when the transaction is deleted.
-- Bill replacement/removal is available from the expense editor.
-- Image compression now targets approximately 700 KB with iterative resize/quality reduction.
-- Database RLS remains the final authorization layer; UI visibility alone is not relied upon.
-- Existing audit triggers continue to record updates and deletions.
-
-
-## V2.2 employees and dashboard cleanup
-
-- Removed the duplicate dashboard quick-action cards; the sticky top navigation is the single navigation area.
-- Added an Admin-only Employees page.
-- Admin can invite regular users through a secure Supabase Edge Function.
-- Employee details include name, phone, job title, monthly salary, salary currency and active status.
-- Admin can edit profiles and activate/deactivate regular users.
-- The only admin cannot deactivate their own account in the UI.
-- Invitation links open a password-setup screen in the app.
-- See `03_EMPLOYEES_SETUP.md` for the Edge Function and Auth URL setup.
-
-## V2.3 Employee Workspace & Attendance
-
-- Employee home hub with Submit Expense, My Expenses, My Attendance, My Payslips and My Profile.
-- Admin attendance management by employee and month.
-- Present, absent, half-day, leave, notes and clear/reset support.
-- Employee read-only monthly attendance calendar and totals.
-- Employee profile view and salary/payslip history placeholder using existing secure payroll data.
-- Employee top navigation stays uncluttered: Home is the only persistent item; module pages return through Back to my home.
-
-
-## V2.4 Products catalogue
-
-- Admin-only product catalogue
-- Product name, SKU, category, pack size, selling price and optional cost price
-- EUR or LKR product pricing
-- Optional compressed product photo in private Supabase Storage
-- Search and active/archived filters
-- Edit, archive and restore controls
-- Database audit history
-
-Run `05_PRODUCTS_SETUP.sql` before deploying this version.
-
-
-## V2.5 Payroll & Payslips
-
-Run `06_PAYROLL_PAYSLIPS_SETUP.sql` before deploying this update. The Payroll tab lets the administrator prepare drafts, finalize payroll, create a branded private PDF, mark salary paid, and allow each employee to download only their own finalized payslip.
-
-
-## Shops / customer directory
-
-Run `07_SHOPS_SETUP.sql` before using the Shops tab. Shop codes are generated automatically and archived shops remain available for future invoice history.
-
-
-## Premium PDF design
-
-Payslips now use the white + gold premium classic template. The shared PDF branding helpers are ready for the upcoming invoice generator. See `08_PREMIUM_PDF_DESIGN.md`.
-
-## V2.8 Sales, deliveries & invoices
-
-Run `09_SALES_DELIVERIES_INVOICES_SETUP.sql` in Supabase before opening the Sales tab. The module includes draft invoices, premium invoice and delivery-note PDFs, delivery status, payments, balances, overdue tracking and private document storage.
-
+Never add a Supabase secret/service-role key to the frontend repository.
