@@ -25,16 +25,14 @@ jobs:
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
 
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - - name: Check out source
+  uses: actions/checkout@v5
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
+- name: Set up Node.js
+  uses: actions/setup-node@v6
+  with:
+    node-version: '24'
+    package-manager-cache: false
       - name: Validate Supabase build settings
         shell: bash
         run: |
