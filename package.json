@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:android-web": "npm run build",
+    "android:prepare-assets": "node scripts/copy-android-assets.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
