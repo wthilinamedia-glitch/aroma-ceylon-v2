@@ -94,6 +94,10 @@ type InvoiceRecord = {
   delivered_at: string | null
   created_at: string
   updated_at: string
+  is_test?: boolean
+  marked_test_at?: string | null
+  voided_at?: string | null
+  void_reason?: string | null
   items: InvoiceItemRecord[]
   payments: InvoicePaymentRecord[]
 }
@@ -111,6 +115,12 @@ type ReversePaymentResult = {
   invoice_code: string
   receipt_pdf_path: string | null
   invoice_pdf_path: string | null
+}
+
+type InvoiceCleanupResult = {
+  invoice_id: string
+  invoice_code: string
+  document_paths?: string[]
 }
 
 type SalesManagerProps = {
@@ -176,6 +186,7 @@ function newDraftItem(): DraftItem {
 
 function statusLabel(status: SalesInvoiceStatus) {
   if (status === 'partially_paid') return 'Partially paid'
+  if (status === 'cancelled') return 'Void'
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
@@ -226,11 +237,13 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
   const [discount, setDiscount] = useState('0')
   const [taxRate, setTaxRate] = useState('0')
   const [notes, setNotes] = useState('')
+  const [isTest, setIsTest] = useState(false)
   const [draftItems, setDraftItems] = useState<DraftItem[]>([newDraftItem()])
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | SalesInvoiceStatus>('all')
   const [deliveryFilter, setDeliveryFilter] = useState<'all' | SalesDeliveryStatus>('all')
+  const [recordFilter, setRecordFilter] = useState<'all' | 'real' | 'test'>('all')
 
   const [paymentDate, setPaymentDate] = useState(localIsoDate())
   const [paymentAmount, setPaymentAmount] = useState('')
@@ -357,16 +370,18 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
         shop?.city,
         invoice.status,
         invoice.delivery_status,
+        invoice.is_test ? 'test' : 'real',
       ].filter(Boolean).join(' ').toLowerCase()
       return (statusFilter === 'all' || invoice.status === statusFilter)
         && (deliveryFilter === 'all' || invoice.delivery_status === deliveryFilter)
+        && (recordFilter === 'all' || (recordFilter === 'test' ? Boolean(invoice.is_test) : !invoice.is_test))
         && (!term || searchable.includes(term))
     })
-  }, [invoices, shops, search, statusFilter, deliveryFilter])
+  }, [invoices, shops, search, statusFilter, deliveryFilter, recordFilter])
 
   const salesSummary = useMemo(() => {
     const result: Record<string, { invoiced: number; paid: number; outstanding: number }> = {}
-    invoices.filter((invoice) => !['draft', 'cancelled'].includes(invoice.status)).forEach((invoice) => {
+    invoices.filter((invoice) => !invoice.is_test && !['draft', 'cancelled'].includes(invoice.status)).forEach((invoice) => {
       const row = result[invoice.currency] ||= { invoiced: 0, paid: 0, outstanding: 0 }
       row.invoiced += Math.max(Number(invoice.total_amount || 0) - Number(invoice.credited_amount || 0), 0)
       row.paid += Number(invoice.paid_amount || 0)
@@ -374,7 +389,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     })
     return {
       byCurrency: result,
-      overdue: invoices.filter((invoice) => invoice.status === 'overdue').length,
+      overdue: invoices.filter((invoice) => !invoice.is_test && invoice.status === 'overdue').length,
     }
   }, [invoices])
 
@@ -388,6 +403,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setDiscount('0')
     setTaxRate('0')
     setNotes('')
+    setIsTest(false)
     setDraftItems([newDraftItem()])
   }
 
@@ -441,7 +457,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       unit_price: Number(item.unit_price),
     }))
 
-    const { error: saveError } = await supabase.rpc('save_sales_invoice', {
+    const { data: savedInvoiceId, error: saveError } = await supabase.rpc('save_sales_invoice', {
       p_invoice_id: editingInvoiceId,
       p_shop_id: shopId,
       p_invoice_date: invoiceDate,
@@ -454,12 +470,27 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       p_items: payload,
     })
 
-    setBusy(false)
     if (saveError) {
+      setBusy(false)
       setError(saveError.message)
       return
     }
 
+    const invoiceId = String(savedInvoiceId || editingInvoiceId || '')
+    if (invoiceId) {
+      const { error: testModeError } = await supabase.rpc('set_sales_invoice_test', {
+        p_invoice_id: invoiceId,
+        p_is_test: isTest,
+      })
+      if (testModeError) {
+        setBusy(false)
+        setError(`The draft was saved, but its test/real setting could not be updated: ${testModeError.message}`)
+        await loadInvoices()
+        return
+      }
+    }
+
+    setBusy(false)
     await loadInvoices()
     setMessage(editingInvoiceId ? 'Invoice draft updated.' : 'Invoice draft saved.')
     resetForm()
@@ -478,6 +509,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setDiscount(String(Number(invoice.discount_amount || 0)))
     setTaxRate(String(Number(invoice.tax_rate || 0)))
     setNotes(invoice.notes || '')
+    setIsTest(Boolean(invoice.is_test))
     setDraftItems(invoice.items.map((item) => ({
       key: crypto.randomUUID(),
       product_id: item.product_id || '',
@@ -507,6 +539,116 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     }
     setSelectedInvoiceId(null)
     setMessage('Invoice draft deleted.')
+    await loadInvoices()
+    onChanged?.()
+  }
+
+
+  async function removePrivateDocuments(paths: Array<string | null | undefined>) {
+    const uniquePaths = [...new Set(paths.filter((path): path is string => Boolean(path)))]
+    if (uniquePaths.length === 0) return ''
+    const { error: removeError } = await supabase.storage.from('sales-documents').remove(uniquePaths)
+    return removeError?.message || ''
+  }
+
+  async function markInvoiceAsTest(invoice: InvoiceRecord) {
+    if (invoice.is_test || invoice.status === 'cancelled') return
+    if (!window.confirm(
+      `Mark ${invoice.invoice_code} as a TEST invoice?
+
+` +
+      'It will be excluded from reports, dashboard income and cash profit. You can then permanently delete it.',
+    )) return
+
+    setBusy(true)
+    setError('')
+    setMessage('')
+    const { data, error: testError } = await supabase.rpc('set_sales_invoice_test', {
+      p_invoice_id: invoice.id,
+      p_is_test: true,
+    })
+    if (testError) {
+      setBusy(false)
+      setError(testError.message)
+      return
+    }
+    const result = (data || {}) as InvoiceCleanupResult
+    const cleanupError = await removePrivateDocuments(result.document_paths || [])
+    setSelectedInvoiceId(null)
+    setMessage(`${invoice.invoice_code} is now marked TEST and excluded from business reports and cash profit. Refresh PDFs to create TEST-labelled documents.`)
+    if (cleanupError) setError(`The TEST setting was saved, but old private PDF files need attention: ${cleanupError}`)
+    setBusy(false)
+    await loadInvoices()
+    onChanged?.()
+  }
+
+  async function deleteTestInvoice(invoice: InvoiceRecord) {
+    if (!invoice.is_test) return
+    if (!window.confirm(
+      `Permanently delete TEST invoice ${invoice.invoice_code}?
+
+` +
+      'Payments and automatic income will be removed, stock will be restored, refunds/credits will be cleared, and reports will be recalculated. This cannot be undone.',
+    )) return
+
+    setBusy(true)
+    setError('')
+    setMessage('')
+    const { data, error: deleteError } = await supabase.rpc('delete_test_sales_invoice', {
+      p_invoice_id: invoice.id,
+    })
+    if (deleteError) {
+      setBusy(false)
+      setError(deleteError.message)
+      return
+    }
+
+    const result = (data || {}) as InvoiceCleanupResult
+    const cleanupError = await removePrivateDocuments(result.document_paths || [])
+    setSelectedInvoiceId(null)
+    setPaymentInvoiceId(null)
+    setMessage(`Test invoice ${invoice.invoice_code} was permanently removed and all linked totals were reversed.`)
+    if (cleanupError) setError(`The database cleanup succeeded, but old private PDF files need attention: ${cleanupError}`)
+    setBusy(false)
+    await loadInvoices()
+    onChanged?.()
+  }
+
+  async function voidInvoice(invoice: InvoiceRecord) {
+    if (invoice.is_test || ['draft', 'cancelled'].includes(invoice.status)) return
+    const reason = window.prompt(
+      `Void ${invoice.invoice_code}?
+
+Enter the reason. Payments/income, stock, refunds and reports will be reversed. The invoice record will remain for audit history.`,
+      'Invoice entered in error',
+    )
+    if (reason === null) return
+    if (reason.trim().length < 3) {
+      setError('Enter a clear reason before voiding the invoice.')
+      return
+    }
+    if (!window.confirm(`Confirm VOID for ${invoice.invoice_code}? This cannot be changed back from the app.`)) return
+
+    setBusy(true)
+    setError('')
+    setMessage('')
+    const { data, error: voidError } = await supabase.rpc('void_sales_invoice', {
+      p_invoice_id: invoice.id,
+      p_reason: reason.trim(),
+    })
+    if (voidError) {
+      setBusy(false)
+      setError(voidError.message)
+      return
+    }
+
+    const result = (data || {}) as InvoiceCleanupResult
+    const cleanupError = await removePrivateDocuments(result.document_paths || [])
+    setSelectedInvoiceId(null)
+    setPaymentInvoiceId(null)
+    setMessage(`${invoice.invoice_code} was voided. Linked accounting, inventory and report totals were reversed.`)
+    if (cleanupError) setError(`The invoice was voided, but old private PDF files need attention: ${cleanupError}`)
+    setBusy(false)
     await loadInvoices()
     onChanged?.()
   }
@@ -729,9 +871,9 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
     setPaymentInvoiceId(null)
     setPaymentExchangeRate('')
     setSelectedInvoiceId(null)
-    setMessage(paymentDocumentsUpdated
-      ? 'Payment recorded, income updated and the outstanding balance recalculated.'
-      : 'Payment and income were recorded. Open the invoice to recreate any missing PDF.')
+    setMessage(paymentInvoice.is_test
+      ? (paymentDocumentsUpdated ? 'Test payment recorded. It is excluded from dashboard income and cash profit.' : 'Test payment recorded. Open the invoice to recreate any missing PDF.')
+      : (paymentDocumentsUpdated ? 'Payment recorded, income updated and the outstanding balance recalculated.' : 'Payment and income were recorded. Open the invoice to recreate any missing PDF.'))
     setBusy(false)
     await loadInvoices()
     onChanged?.()
@@ -779,9 +921,9 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
       setError(caught instanceof Error ? caught.message : 'Payment reversed, but the invoice PDF could not be refreshed.')
     }
 
-    setMessage(invoicePdfUpdated
-      ? 'Payment reversed. Income, invoice balance, status and invoice PDF were updated.'
-      : 'Payment and its income entry were reversed. Use Refresh PDFs on the invoice.')
+    setMessage(invoice.is_test
+      ? (invoicePdfUpdated ? 'Test payment reversed and invoice totals were updated.' : 'Test payment reversed. Use Refresh PDFs on the invoice.')
+      : (invoicePdfUpdated ? 'Payment reversed. Income, invoice balance, status and invoice PDF were updated.' : 'Payment and its income entry were reversed. Use Refresh PDFs on the invoice.'))
     setSelectedInvoiceId(null)
     setBusy(false)
     await loadInvoices()
@@ -922,6 +1064,11 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
             </label>
           </div>
 
+          <label className={`sales-test-toggle ${isTest ? 'active' : ''}`}>
+            <input type="checkbox" checked={isTest} onChange={(event) => setIsTest(event.target.checked)} />
+            <span><strong>Test invoice</strong><small>Excluded from reports, dashboard income and cash profit. Test records can be permanently deleted.</small></span>
+          </label>
+
           {selectedShop && (
             <div className="sales-shop-summary">
               <div><span>Shop</span><strong>{selectedShop.shop_name}</strong></div>
@@ -1028,6 +1175,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                   <option value="partially_paid">Partially paid</option>
                   <option value="paid">Paid</option>
                   <option value="overdue">Overdue</option>
+                  <option value="cancelled">Void</option>
                 </select>
               </label>
               <label>
@@ -1037,6 +1185,15 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                   <option value="pending">Pending</option>
                   <option value="packed">Packed</option>
                   <option value="delivered">Delivered</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </label>
+              <label>
+                Record type
+                <select value={recordFilter} onChange={(event) => setRecordFilter(event.target.value as 'all' | 'real' | 'test')}>
+                  <option value="all">All records</option>
+                  <option value="real">Real invoices</option>
+                  <option value="test">Test invoices</option>
                 </select>
               </label>
             </div>
@@ -1058,6 +1215,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                           <p>{formatDate(invoice.invoice_date)} • Due {formatDate(invoice.due_date)}</p>
                         </div>
                         <div className="sales-card-statuses">
+                          {invoice.is_test && <span className="sales-test-badge">TEST</span>}
                           <span className={`sales-status ${statusClass(invoice.status)}`}>{statusLabel(invoice.status)}</span>
                           <span className={`sales-delivery-status ${invoice.delivery_status}`}>{deliveryLabel(invoice.delivery_status)}</span>
                         </div>
@@ -1075,6 +1233,9 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
                         {invoice.invoice_pdf_path && <button className="small-button" type="button" disabled={downloadBusy === `invoice-${invoice.id}`} onClick={() => downloadInvoice(invoice)}>{downloadBusy === `invoice-${invoice.id}` ? 'Preparing…' : 'Invoice PDF'}</button>}
                         {invoice.delivery_pdf_path && <button className="small-button" type="button" disabled={downloadBusy === `delivery-${invoice.id}`} onClick={() => downloadDelivery(invoice)}>{downloadBusy === `delivery-${invoice.id}` ? 'Preparing…' : 'Delivery PDF'}</button>}
                         {!['draft', 'paid', 'cancelled'].includes(invoice.status) && <button className="success-button small-button" type="button" onClick={() => setPaymentInvoiceId(invoice.id)}>Add payment</button>}
+                        {!invoice.is_test && invoice.status !== 'draft' && invoice.status !== 'cancelled' && <button className="small-button" type="button" disabled={busy} onClick={() => markInvoiceAsTest(invoice)}>Mark as test</button>}
+                        {invoice.is_test && <button className="delete-button" type="button" disabled={busy} onClick={() => deleteTestInvoice(invoice)}>Delete test invoice</button>}
+                        {!invoice.is_test && !['draft', 'cancelled'].includes(invoice.status) && <button className="delete-button" type="button" disabled={busy} onClick={() => voidInvoice(invoice)}>Void invoice</button>}
                       </div>
                     </article>
                   )
@@ -1098,9 +1259,13 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
             </div>
 
             <div className="sales-detail-status-row">
+              {selectedInvoice.is_test && <span className="sales-test-badge">TEST</span>}
               <span className={`sales-status ${statusClass(selectedInvoice.status)}`}>{statusLabel(selectedInvoice.status)}</span>
               <span className={`sales-delivery-status ${selectedInvoice.delivery_status}`}>{deliveryLabel(selectedInvoice.delivery_status)}</span>
             </div>
+
+            {selectedInvoice.is_test && <div className="sales-record-warning"><strong>TEST INVOICE</strong><span>Excluded from reports, dashboard income and cash profit. It can be permanently deleted by the administrator.</span></div>}
+            {selectedInvoice.status === 'cancelled' && <div className="sales-record-warning void"><strong>VOID INVOICE</strong><span>{selectedInvoice.void_reason || 'This invoice was voided and retained only for audit history.'}</span></div>}
 
             <div className="sales-detail-grid">
               <div><span>Invoice date</span><strong>{formatDate(selectedInvoice.invoice_date)}</strong></div>
@@ -1145,10 +1310,13 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
             <div className="sales-detail-actions">
               {selectedInvoice.status === 'draft' && <button className="edit-button" type="button" onClick={() => editDraft(selectedInvoice)}>Edit draft</button>}
               {selectedInvoice.status === 'draft' && <button className="primary-button" type="button" disabled={busy} onClick={() => finalizeInvoice(selectedInvoice)}>Finalize & create PDFs</button>}
-              {selectedInvoice.status === 'draft' && <button className="delete-button" type="button" disabled={busy} onClick={() => deleteDraft(selectedInvoice)}>Delete draft</button>}
-              {selectedInvoice.status !== 'draft' && selectedInvoice.delivery_status === 'pending' && <button className="small-button" type="button" disabled={busy} onClick={() => updateDeliveryStatus(selectedInvoice, 'packed')}>Mark packed</button>}
-              {selectedInvoice.status !== 'draft' && selectedInvoice.delivery_status !== 'delivered' && <button className="success-button small-button" type="button" disabled={busy} onClick={() => updateDeliveryStatus(selectedInvoice, 'delivered')}>Mark delivered</button>}
-              {selectedInvoice.status !== 'draft' && <button className="small-button" type="button" disabled={busy} onClick={() => regenerateDocuments(selectedInvoice)}>Refresh PDFs</button>}
+              {selectedInvoice.status === 'draft' && !selectedInvoice.is_test && <button className="delete-button" type="button" disabled={busy} onClick={() => deleteDraft(selectedInvoice)}>Delete draft</button>}
+              {!selectedInvoice.is_test && selectedInvoice.status !== 'draft' && selectedInvoice.status !== 'cancelled' && <button className="small-button" type="button" disabled={busy} onClick={() => markInvoiceAsTest(selectedInvoice)}>Mark as test</button>}
+              {selectedInvoice.is_test && <button className="delete-button" type="button" disabled={busy} onClick={() => deleteTestInvoice(selectedInvoice)}>Delete test invoice</button>}
+              {!selectedInvoice.is_test && !['draft', 'cancelled'].includes(selectedInvoice.status) && <button className="delete-button" type="button" disabled={busy} onClick={() => voidInvoice(selectedInvoice)}>Void invoice</button>}
+              {selectedInvoice.status !== 'draft' && selectedInvoice.status !== 'cancelled' && selectedInvoice.delivery_status === 'pending' && <button className="small-button" type="button" disabled={busy} onClick={() => updateDeliveryStatus(selectedInvoice, 'packed')}>Mark packed</button>}
+              {selectedInvoice.status !== 'draft' && selectedInvoice.status !== 'cancelled' && selectedInvoice.delivery_status !== 'delivered' && <button className="success-button small-button" type="button" disabled={busy} onClick={() => updateDeliveryStatus(selectedInvoice, 'delivered')}>Mark delivered</button>}
+              {selectedInvoice.status !== 'draft' && selectedInvoice.status !== 'cancelled' && <button className="small-button" type="button" disabled={busy} onClick={() => regenerateDocuments(selectedInvoice)}>Refresh PDFs</button>}
               {selectedInvoice.invoice_pdf_path && <button className="small-button" type="button" onClick={() => downloadInvoice(selectedInvoice)}>Download invoice</button>}
               {selectedInvoice.delivery_pdf_path && <button className="small-button" type="button" onClick={() => downloadDelivery(selectedInvoice)}>Download delivery note</button>}
             </div>

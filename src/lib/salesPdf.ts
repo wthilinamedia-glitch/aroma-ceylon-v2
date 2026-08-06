@@ -120,6 +120,11 @@ function pdfLanguage(shop: SalesShopPdfRecord | { preferred_language?: 'en' | 's
   return shop.preferred_language === 'si' ? 'si' : 'en'
 }
 
+function documentStatus(invoice: SalesInvoicePdfRecord, status: string, language: PdfLanguage) {
+  const readable = pdfStatus(status, language)
+  return invoice.is_test ? `TEST • ${readable}` : readable
+}
+
 export type SalesInvoiceStatus = 'draft' | 'sent' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled'
 export type SalesDeliveryStatus = 'pending' | 'packed' | 'delivered' | 'cancelled'
 
@@ -143,6 +148,7 @@ export type SalesInvoicePdfRecord = {
   notes: string | null
   sent_at: string | null
   delivered_at: string | null
+  is_test?: boolean
 }
 
 export type SalesInvoicePdfItem = {
@@ -364,7 +370,7 @@ export async function createInvoicePdfBlob(
     doc,
     pdfLabel('TAX INVOICE', language),
     `${invoice.invoice_code} • ${formatDate(invoice.invoice_date)}`,
-    pdfStatus(invoice.status, language),
+    documentStatus(invoice, invoice.status, language),
     logo,
   )
   y = drawCustomerAndDocumentCards(doc, invoice, shop, y, 'Invoice details', language)
@@ -376,7 +382,7 @@ export async function createInvoicePdfBlob(
     const rowHeight = 12
     if (y + rowHeight > bottomLimit) {
       doc.addPage()
-      y = addPageHeader(doc, pdfLabel('TAX INVOICE', language), invoice.invoice_code, pdfStatus(invoice.status, language), logo)
+      y = addPageHeader(doc, pdfLabel('TAX INVOICE', language), invoice.invoice_code, documentStatus(invoice, invoice.status, language), logo)
       drawPdfSectionTitle(doc, pdfLabel('Products & charges continued', language), y)
       y += 7
       y = drawInvoiceTableHeader(doc, y, language)
@@ -407,7 +413,7 @@ export async function createInvoicePdfBlob(
   const totalsHeight = 67
   if (y + totalsHeight > bottomLimit) {
     doc.addPage()
-    y = addPageHeader(doc, pdfLabel('TAX INVOICE', language), invoice.invoice_code, pdfStatus(invoice.status, language), logo)
+    y = addPageHeader(doc, pdfLabel('TAX INVOICE', language), invoice.invoice_code, documentStatus(invoice, invoice.status, language), logo)
   } else {
     y += 7
   }
@@ -519,7 +525,7 @@ export async function createDeliveryNotePdfBlob(
     doc,
     pdfLabel('DELIVERY NOTE', language),
     `${invoice.invoice_code} • ${invoice.delivery_date ? formatDate(invoice.delivery_date) : formatDate(invoice.invoice_date)}`,
-    pdfStatus(invoice.delivery_status, language),
+    documentStatus(invoice, invoice.delivery_status, language),
     logo,
   )
   y = drawCustomerAndDocumentCards(doc, invoice, shop, y, 'Delivery details', language)
@@ -531,7 +537,7 @@ export async function createDeliveryNotePdfBlob(
     const rowHeight = 12
     if (y + rowHeight > bottomLimit) {
       doc.addPage()
-      y = addPageHeader(doc, pdfLabel('DELIVERY NOTE', language), invoice.invoice_code, pdfStatus(invoice.delivery_status, language), logo)
+      y = addPageHeader(doc, pdfLabel('DELIVERY NOTE', language), invoice.invoice_code, documentStatus(invoice, invoice.delivery_status, language), logo)
       drawPdfSectionTitle(doc, pdfLabel('Delivered products continued', language), y)
       y += 7
       y = drawDeliveryTableHeader(doc, y, language)
@@ -557,7 +563,7 @@ export async function createDeliveryNotePdfBlob(
 
   if (y + 58 > bottomLimit) {
     doc.addPage()
-    y = addPageHeader(doc, pdfLabel('DELIVERY NOTE', language), invoice.invoice_code, pdfStatus(invoice.delivery_status, language), logo)
+    y = addPageHeader(doc, pdfLabel('DELIVERY NOTE', language), invoice.invoice_code, documentStatus(invoice, invoice.delivery_status, language), logo)
   } else {
     y += 9
   }
@@ -591,7 +597,7 @@ export async function createDeliveryNotePdfBlob(
     doc,
     pdfFooterLabel('Prepared by', authorizedBy || 'Aroma Ceylon Administrator', language),
     pdfLabel('This delivery note intentionally excludes product prices.', language),
-    pdfFooterLabel('Delivery status', pdfStatus(invoice.delivery_status, language), language),
+    pdfFooterLabel('Delivery status', documentStatus(invoice, invoice.delivery_status, language), language),
   )
 
   return doc.output('blob')
@@ -613,7 +619,7 @@ export async function createPaymentReceiptPdfBlob(
   let y = addPremiumPdfHeader(doc, {
     title: pdfLabel('PAYMENT RECEIPT', language),
     subtitle: `${invoice.invoice_code} • ${formatDate(payment.payment_date)}`,
-    status: `${pdfLabel('Paid', language)} / ${pdfLabel('Received', language)}`,
+    status: invoice.is_test ? `TEST • ${pdfLabel('Paid', language)} / ${pdfLabel('Received', language)}` : `${pdfLabel('Paid', language)} / ${pdfLabel('Received', language)}`,
     logoDataUrl: logo,
   })
 

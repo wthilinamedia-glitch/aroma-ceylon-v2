@@ -28,6 +28,7 @@ type Invoice = {
   invoice_date: string
   delivery_status: string
   shop_id: string
+  is_test?: boolean
 }
 
 type InvoiceItem = {
@@ -173,7 +174,7 @@ export function OperationsHub({
     setLoading(true)
     setError('')
     const [invoiceResult, itemResult, paymentResult, profitResult, creditResult, creditItemResult, movementResult] = await Promise.all([
-      supabase.from('sales_invoices').select('id,invoice_code,total_amount,credited_amount,paid_amount,balance_amount,currency,status,invoice_date,delivery_status,shop_id').order('invoice_date', { ascending: false }),
+      supabase.from('sales_invoices').select('id,invoice_code,total_amount,credited_amount,paid_amount,balance_amount,currency,status,invoice_date,delivery_status,shop_id,is_test').order('invoice_date', { ascending: false }),
       supabase.from('sales_invoice_items').select('id,invoice_id,product_id,product_name,sku,pack_size,quantity,unit_price,cost_price,line_total').order('sort_order'),
       supabase.from('sales_invoice_payments').select('id,invoice_id,payment_date,amount').order('payment_date', { ascending: false }),
       supabase.from('sales_profit_report').select('*'),
@@ -221,13 +222,16 @@ export function OperationsHub({
   )
 
   const monthlyProfitRows = useMemo(
-    () => profits.filter((row) => row.invoice_date?.slice(0, 7) === selectedMonth && !['draft', 'cancelled'].includes(row.status)),
+    () => profits.filter((row) => row.invoice_date?.slice(0, 7) === selectedMonth && !row.is_test && !['draft', 'cancelled'].includes(row.status)),
     [profits, selectedMonth],
   )
 
   const monthlyPayments = useMemo(
-    () => payments.filter((payment) => payment.payment_date?.slice(0, 7) === selectedMonth),
-    [payments, selectedMonth],
+    () => payments.filter((payment) => {
+      const invoice = invoices.find((candidate) => candidate.id === payment.invoice_id)
+      return payment.payment_date?.slice(0, 7) === selectedMonth && invoice && !invoice.is_test && invoice.status !== 'cancelled'
+    }),
+    [payments, selectedMonth, invoices],
   )
 
   const byCurrency = useMemo(() => {
@@ -243,12 +247,12 @@ export function OperationsHub({
       const invoice = invoices.find((candidate) => candidate.id === payment.invoice_id)
       if (invoice) ensure(invoice.currency).received += Number(payment.amount || 0)
     })
-    invoices.filter((invoice) => !['draft', 'cancelled', 'paid'].includes(invoice.status)).forEach((invoice) => {
+    invoices.filter((invoice) => !invoice.is_test && !['draft', 'cancelled', 'paid'].includes(invoice.status)).forEach((invoice) => {
       ensure(invoice.currency).outstanding += Number(invoice.balance_amount || 0)
     })
     credits.filter((credit) => credit.status !== 'cancelled' && credit.created_at?.slice(0, 7) === selectedMonth).forEach((credit) => {
       const invoice = invoices.find((candidate) => candidate.id === credit.invoice_id)
-      if (invoice) ensure(invoice.currency).credits += Number(credit.amount || 0)
+      if (invoice && !invoice.is_test && invoice.status !== 'cancelled') ensure(invoice.currency).credits += Number(credit.amount || 0)
     })
     return result
   }, [monthlyProfitRows, monthlyPayments, invoices, credits, selectedMonth])
@@ -262,7 +266,7 @@ export function OperationsHub({
   }, [products])
 
   const bestSellingProducts = useMemo(() => {
-    const monthInvoiceIds = new Set(invoices.filter((invoice) => invoice.invoice_date?.slice(0, 7) === selectedMonth && !['draft', 'cancelled'].includes(invoice.status)).map((invoice) => invoice.id))
+    const monthInvoiceIds = new Set(invoices.filter((invoice) => invoice.invoice_date?.slice(0, 7) === selectedMonth && !invoice.is_test && !['draft', 'cancelled'].includes(invoice.status)).map((invoice) => invoice.id))
     const validCreditIds = new Set(credits.filter((credit) => credit.status !== 'cancelled').map((credit) => credit.id))
     const returnedByInvoiceItem: Record<string, number> = {}
     creditItems.forEach((item) => {
@@ -283,7 +287,7 @@ export function OperationsHub({
 
   const outstandingByShop = useMemo(() => {
     const grouped: Record<string, Record<string, number>> = {}
-    invoices.filter((invoice) => !['draft', 'cancelled', 'paid'].includes(invoice.status)).forEach((invoice) => {
+    invoices.filter((invoice) => !invoice.is_test && !['draft', 'cancelled', 'paid'].includes(invoice.status)).forEach((invoice) => {
       const shopGroup = grouped[invoice.shop_id] ||= {}
       shopGroup[invoice.currency] = (shopGroup[invoice.currency] || 0) + Number(invoice.balance_amount || 0)
     })
@@ -633,7 +637,7 @@ export function OperationsHub({
       <section className="content-card form-card">
         <div className="card-title-row"><div><p className="eyebrow">RETURNS & REFUNDS</p><h2>{t('Credit note', language)} / {t('Refund', language)}</h2><p className="section-copy">A credit note reduces the invoice balance. Returned quantities restore only the selected stock.</p></div></div>
         <form className="compact-form credit-form" onSubmit={issueCredit}>
-          <label>Invoice<select value={invoiceId} onChange={(event) => { setInvoiceId(event.target.value); setReturnQuantities({}); setCreditAmount('') }} required><option value="">Select invoice</option>{invoices.filter((invoice) => !['draft', 'cancelled'].includes(invoice.status) && Number(invoice.total_amount) - Number(invoice.credited_amount || 0) > 0.01).map((invoice) => <option value={invoice.id} key={invoice.id}>{invoice.invoice_code} · {money(Number(invoice.total_amount) - Number(invoice.credited_amount || 0), invoice.currency)} available</option>)}</select></label>
+          <label>Invoice<select value={invoiceId} onChange={(event) => { setInvoiceId(event.target.value); setReturnQuantities({}); setCreditAmount('') }} required><option value="">Select invoice</option>{invoices.filter((invoice) => !invoice.is_test && !['draft', 'cancelled'].includes(invoice.status) && Number(invoice.total_amount) - Number(invoice.credited_amount || 0) > 0.01).map((invoice) => <option value={invoice.id} key={invoice.id}>{invoice.invoice_code} · {money(Number(invoice.total_amount) - Number(invoice.credited_amount || 0), invoice.currency)} available</option>)}</select></label>
           <label>Credit amount<input type="number" min="0.01" step="0.01" value={creditAmount} onChange={(event) => setCreditAmount(event.target.value)} required /></label>
           <label>Reason<input value={creditReason} onChange={(event) => setCreditReason(event.target.value)} required /></label>
 

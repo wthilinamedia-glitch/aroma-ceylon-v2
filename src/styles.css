@@ -1402,3 +1402,81 @@ input:focus, select:focus, textarea:focus {
     margin-bottom: 0.5rem;
   }
 }
+
+/* Test invoice + safe void controls */
+.sales-test-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0.25rem 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--cream, #fffaf1);
+  cursor: pointer;
+}
+
+.sales-test-toggle.active {
+  border-color: var(--gold);
+  background: var(--gold-pale);
+}
+
+.sales-test-toggle input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.15rem;
+  accent-color: var(--gold-dark);
+}
+
+.sales-test-toggle span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.sales-test-toggle small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.sales-test-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.65rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #b58a1f;
+  border-radius: 999px;
+  background: #fff4bf;
+  color: #654b08;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.sales-record-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.8rem 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #d4b24c;
+  border-radius: 12px;
+  background: #fff8d8;
+  color: #5f4708;
+}
+
+.sales-record-warning.void {
+  border-color: #d4a0a0;
+  background: var(--danger-pale);
+  color: #742323;
+}
+
+.sales-record-warning strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+}
+
+.sales-record-warning span {
+  font-size: 0.88rem;
+  line-height: 1.45;
+}

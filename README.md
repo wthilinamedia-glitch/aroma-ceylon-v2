@@ -1,36 +1,30 @@
-# Aroma Ceylon Business App V2 — Stable Complete Upgrade
+# Aroma Ceylon Business App V2 — Stable Invoice Cleanup Release
 
-This release is based on the uploaded `aroma-ceylon-v2-8` stable build. It preserves the existing authentication, income, expenses, employees, attendance, payroll, products, shops and sales flows, then adds the agreed upgrade without replacing those working foundations.
+This release preserves the stable complete upgrade and the transaction/attendance fixes, then adds safe test-invoice cleanup and real-invoice voiding.
 
 ## Included modules
 
 - Supabase authentication and role-based access
-- Admin income and employee expense approvals
-- Employees, attendance and private payroll/payslips
-- Product catalogue and private product images
-- Shops/customers with automatic shop codes
-- Sales, deliveries, invoices and private PDFs
-- Partial/full payments and automatic income synchronization
-- Paid payroll and refund synchronization to approved expenses
-- Protected inventory, stock movements and low-stock warnings
-- Credit notes, partial product returns and refunds
-- Monthly sales, outstanding, inventory and gross-profit reports
-- Employee ↔ Admin named messages, attachments and replies
-- Private, selected-employee and all-employee announcements
+- Income, expenses and approval flows
+- Employees, stable attendance selection and payroll/payslips
+- Products, shops/customers and inventory
+- Sales, deliveries, invoices and private premium PDFs
+- Partial/full payments and admin-only payment reversal
+- Credit notes, returns and refunds
 - English / සිංහල interface preference
-- White + gold premium PDF family for payslips, invoices, delivery notes, receipts and credit notes
+- Employee ↔ Admin messaging and announcements
+- Reports excluding test and void invoices
+- Admin-only test-invoice deletion and real-invoice voiding
 
-## Upgrade database step
+## Database step
 
-For an existing stable-complete deployment, run `11_TRANSACTION_ATTENDANCE_FIX.sql` once in Supabase SQL Editor before deploying this package.
-
-For a fresh upgrade that has not received the stable-complete database changes, run `10_STABLE_COMPLETE_UPGRADE_PATCH.sql` first and then `11_TRANSACTION_ATTENDANCE_FIX.sql`.
+Run the supplied combined SQL patch in Supabase SQL Editor before deploying this project. It safely re-applies the transaction/payment reversal patch and then adds the invoice cleanup patch.
 
 ## Deployment
 
 Replace the repository files with the contents of this project folder and commit. Netlify will build and deploy automatically.
 
-Required existing Netlify variables:
+Required Netlify variables:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
