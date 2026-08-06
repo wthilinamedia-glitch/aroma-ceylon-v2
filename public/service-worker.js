@@ -1,4 +1,4 @@
-const CACHE = 'aroma-ceylon-v2-shell-v4'
+const CACHE = 'aroma-ceylon-v2-shell-v5'
 const SHELL = ['/', '/manifest.webmanifest', '/aroma-logo.png', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {

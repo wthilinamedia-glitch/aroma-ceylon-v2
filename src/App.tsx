@@ -43,6 +43,14 @@ type IncomeRecord = {
   source_amount?: number | null
 }
 
+type ReversePaymentResult = {
+  payment_id: string
+  invoice_id: string
+  invoice_code: string
+  receipt_pdf_path: string | null
+  invoice_pdf_path: string | null
+}
+
 type ExpenseRecord = {
   id: string
   title: string
@@ -1437,6 +1445,46 @@ function TransactionsPanel({
     setBusyId('')
   }
 
+  async function reverseAutomaticPayment(item: IncomeRecord) {
+    if (!isAdmin || item.source_type !== 'sales_payment' || !item.source_id) return
+
+    const originalAmount = item.source_currency && item.source_amount != null
+      ? formatCurrency(Number(item.source_amount), item.source_currency)
+      : formatLKR(Number(item.amount_lkr || 0))
+    const confirmed = window.confirm(
+      `Reverse payment ${originalAmount} from “${item.store_name}”?\n\n` +
+      'The linked income will be removed, the invoice balance and status will be recalculated, and the old receipt/invoice PDF will be invalidated.',
+    )
+    if (!confirmed) return
+
+    setBusyId(item.id)
+    setMessage('')
+    const { data, error } = await supabase.rpc('reverse_sales_invoice_payment', {
+      p_payment_id: item.source_id,
+    })
+
+    if (error) {
+      setMessage(error.message)
+      setBusyId('')
+      return
+    }
+
+    const result = (data || {}) as ReversePaymentResult
+    const paths = [result.receipt_pdf_path, result.invoice_pdf_path].filter((path): path is string => Boolean(path))
+    let cleanupWarning = ''
+    if (paths.length) {
+      const { error: storageError } = await supabase.storage.from('sales-documents').remove(paths)
+      if (storageError) cleanupWarning = ` Private PDF cleanup warning: ${storageError.message}`
+    }
+
+    setMessage(
+      `Payment reversed for ${result.invoice_code || 'the linked invoice'}. Income, invoice balance and status were recalculated.${cleanupWarning}` +
+      (result.invoice_pdf_path ? ' Open Sales and use Refresh PDFs to create the updated invoice.' : ''),
+    )
+    onChanged()
+    setBusyId('')
+  }
+
   const pending = expenses.filter((item) => item.status === 'pending')
   const sortedExpenses = [...expenses].sort((a, b) => {
     const dateCompare = b.expense_date.localeCompare(a.expense_date)
@@ -1554,6 +1602,18 @@ function TransactionsPanel({
                       <button className="edit-button" onClick={() => setEditing({ kind: 'income', record: item })}>Edit</button>
                       <button className="delete-button" disabled={busyId === item.id} onClick={() => deleteIncome(item)}>Delete</button>
                     </div>}
+                    {item.source_type === 'sales_payment' && item.source_id && (
+                      <div className="record-actions">
+                        <button
+                          className="delete-button"
+                          type="button"
+                          disabled={busyId === item.id}
+                          onClick={() => reverseAutomaticPayment(item)}
+                        >
+                          {busyId === item.id ? 'Reversing…' : 'Reverse payment'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </article>
               ))}
@@ -2602,24 +2662,41 @@ function AttendancePanel({
 }) {
   const isAdmin = profile.role === 'admin'
   const employees = profiles.filter((item) => item.role === 'user')
+  const attendanceSelectionKey = `aroma-attendance-employee-${profile.id}`
   const [selectedMonth, setSelectedMonth] = useState(currentMonthValue())
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState(
-    isAdmin ? (employees.find((item) => item.active)?.id || employees[0]?.id || '') : profile.id,
-  )
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(() => {
+    if (!isAdmin) return profile.id
+    const savedEmployeeId = localStorage.getItem(attendanceSelectionKey)
+    if (savedEmployeeId && employees.some((item) => item.id === savedEmployeeId)) return savedEmployeeId
+    return employees.find((item) => item.active)?.id || employees[0]?.id || ''
+  })
   const [busyDate, setBusyDate] = useState('')
   const [message, setMessage] = useState('')
 
   useEffect(() => {
     if (!isAdmin) {
-      setSelectedEmployeeId(profile.id)
+      if (selectedEmployeeId !== profile.id) setSelectedEmployeeId(profile.id)
       return
     }
-    if (!selectedEmployeeId && employees.length) {
-      setSelectedEmployeeId(employees.find((item) => item.active)?.id || employees[0].id)
-    }
-  }, [employees, isAdmin, profile.id, selectedEmployeeId])
 
-  const selectedEmployee = profiles.find((item) => item.id === selectedEmployeeId) || profile
+    if (!employees.length) {
+      if (selectedEmployeeId) setSelectedEmployeeId('')
+      localStorage.removeItem(attendanceSelectionKey)
+      return
+    }
+
+    const selectionStillExists = employees.some((item) => item.id === selectedEmployeeId)
+    if (!selectionStillExists) {
+      const fallbackEmployeeId = employees.find((item) => item.active)?.id || employees[0].id
+      setSelectedEmployeeId(fallbackEmployeeId)
+      localStorage.setItem(attendanceSelectionKey, fallbackEmployeeId)
+      return
+    }
+
+    localStorage.setItem(attendanceSelectionKey, selectedEmployeeId)
+  }, [attendanceSelectionKey, employees, isAdmin, profile.id, selectedEmployeeId])
+
+  const selectedEmployee = profiles.find((item) => item.id === selectedEmployeeId) || employees.find((item) => item.active) || employees[0] || profile
   const monthRecords = attendance.filter(
     (item) => item.employee_id === selectedEmployeeId && item.work_date.startsWith(selectedMonth),
   )
@@ -2712,7 +2789,14 @@ function AttendancePanel({
           {isAdmin && (
             <label>
               Employee
-              <select value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)}>
+              <select
+                value={selectedEmployeeId}
+                onChange={(event) => {
+                  const nextEmployeeId = event.target.value
+                  setSelectedEmployeeId(nextEmployeeId)
+                  if (nextEmployeeId) localStorage.setItem(attendanceSelectionKey, nextEmployeeId)
+                }}
+              >
                 {employees.length === 0 && <option value="">No employees</option>}
                 {employees.map((employee) => (
                   <option value={employee.id} key={employee.id}>
@@ -3640,7 +3724,8 @@ function Dashboard({ profile }: { profile: Profile }) {
   }
 
   const loadData = useCallback(async () => {
-    setLoadingData(true)
+    // Keep the active screen mounted during background refreshes so local UI
+    // state (for example the selected attendance employee) is preserved.
     setDataError('')
 
     const expenseRequest = supabase

@@ -62,6 +62,8 @@ export const dictionary: Record<string, string> = {
   'Close': 'වසන්න',
   'Edit': 'සංස්කරණය',
   'Delete': 'මකන්න',
+  'Reverse payment': 'ගෙවීම ආපසු හැරවන්න',
+  'Reversing…': 'ගෙවීම ආපසු හරවමින්…',
   'Archive': 'සංරක්ෂිත කරන්න',
   'Restore': 'නැවත සක්‍රීය කරන්න',
   'Search': 'සොයන්න',

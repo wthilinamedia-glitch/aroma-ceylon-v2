@@ -105,6 +105,14 @@ type DraftItem = {
   unit_price: string
 }
 
+type ReversePaymentResult = {
+  payment_id: string
+  invoice_id: string
+  invoice_code: string
+  receipt_pdf_path: string | null
+  invoice_pdf_path: string | null
+}
+
 type SalesManagerProps = {
   profile: ProfileLike
   shops: ShopLike[]
@@ -730,39 +738,50 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
   }
 
   async function removePayment(invoice: InvoiceRecord, payment: InvoicePaymentRecord) {
-    if (!window.confirm(`Delete payment ${formatCurrency(payment.amount, invoice.currency)}?`)) return
+    if (!window.confirm(
+      `Reverse payment ${formatCurrency(payment.amount, invoice.currency)}?\n\n` +
+      'The linked income will be removed and the invoice balance/status will be recalculated.',
+    )) return
+
     setBusy(true)
     setError('')
-    const { error: deleteError } = await supabase
-      .from('sales_invoice_payments')
-      .delete()
-      .eq('id', payment.id)
-    if (deleteError) {
+    setMessage('')
+
+    const { data, error: reverseError } = await supabase.rpc('reverse_sales_invoice_payment', {
+      p_payment_id: payment.id,
+    })
+    if (reverseError) {
       setBusy(false)
-      setError(deleteError.message)
+      setError(reverseError.message)
       return
     }
-    if (payment.receipt_pdf_path) {
-      const { error: removeReceiptError } = await supabase.storage.from('sales-documents').remove([payment.receipt_pdf_path])
-      if (removeReceiptError) setError(`Payment was removed, but the old receipt file could not be deleted: ${removeReceiptError.message}`)
+
+    const reverseResult = (data || {}) as ReversePaymentResult
+    const oldPaths = [reverseResult.receipt_pdf_path, reverseResult.invoice_pdf_path]
+      .filter((path): path is string => Boolean(path))
+    if (oldPaths.length) {
+      const { error: removeDocumentError } = await supabase.storage.from('sales-documents').remove(oldPaths)
+      if (removeDocumentError) {
+        setError(`Payment was reversed, but old private PDF cleanup needs attention: ${removeDocumentError.message}`)
+      }
     }
 
     let invoicePdfUpdated = true
     try {
       const current = await fetchInvoiceBundle(invoice.id)
       const shop = shops.find((item) => item.id === current.shop_id)
-      if (!shop) throw new Error('Payment was removed, but the invoice shop is unavailable for PDF generation.')
+      if (!shop) throw new Error('Payment was reversed, but the invoice shop is unavailable for PDF generation.')
       const path = await uploadInvoicePdf(current, shop)
       const { error: invoicePathError } = await supabase.from('sales_invoices').update({ invoice_pdf_path: path }).eq('id', current.id)
       if (invoicePathError) throw invoicePathError
     } catch (caught) {
       invoicePdfUpdated = false
-      setError(caught instanceof Error ? caught.message : 'Payment removed, but the invoice PDF could not be refreshed.')
+      setError(caught instanceof Error ? caught.message : 'Payment reversed, but the invoice PDF could not be refreshed.')
     }
 
     setMessage(invoicePdfUpdated
-      ? 'Payment removed. Income and the invoice balance were recalculated.'
-      : 'Payment and its income entry were removed. Use Refresh PDFs on the invoice.')
+      ? 'Payment reversed. Income, invoice balance, status and invoice PDF were updated.'
+      : 'Payment and its income entry were reversed. Use Refresh PDFs on the invoice.')
     setSelectedInvoiceId(null)
     setBusy(false)
     await loadInvoices()
@@ -1116,7 +1135,7 @@ export function SalesManager({ profile, shops, products, onChanged }: SalesManag
               {selectedInvoice.payments.length === 0 ? <p className="section-copy">No payments recorded.</p> : selectedInvoice.payments.map((payment) => (
                 <div className="sales-payment-row" key={payment.id}>
                   <span><strong>{formatCurrency(payment.amount, selectedInvoice.currency)}</strong><small>{formatDate(payment.payment_date)} • {payment.payment_method}{payment.reference ? ` • ${payment.reference}` : ''}</small></span>
-                  <span className="sales-payment-actions">{payment.receipt_pdf_path ? <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => downloadPaymentReceipt(selectedInvoice, payment)}>Receipt PDF</button> : <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => createOrRefreshPaymentReceipt(selectedInvoice, payment)}>{downloadBusy === `receipt-${payment.id}` ? 'Preparing…' : 'Create receipt PDF'}</button>}<button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Delete</button></span>
+                  <span className="sales-payment-actions">{payment.receipt_pdf_path ? <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => downloadPaymentReceipt(selectedInvoice, payment)}>Receipt PDF</button> : <button className="small-button" type="button" disabled={downloadBusy === `receipt-${payment.id}`} onClick={() => createOrRefreshPaymentReceipt(selectedInvoice, payment)}>{downloadBusy === `receipt-${payment.id}` ? 'Preparing…' : 'Create receipt PDF'}</button>}<button className="delete-button" type="button" disabled={busy} onClick={() => removePayment(selectedInvoice, payment)}>Reverse payment</button></span>
                 </div>
               ))}
             </div>

@@ -22,7 +22,9 @@ This release is based on the uploaded `aroma-ceylon-v2-8` stable build. It prese
 
 ## Upgrade database step
 
-Run `10_STABLE_COMPLETE_UPGRADE_PATCH.sql` once in Supabase SQL Editor **before** deploying this package. See `10_STABLE_COMPLETE_UPGRADE_SETUP.md` for the safe order and the note about older EUR records.
+For an existing stable-complete deployment, run `11_TRANSACTION_ATTENDANCE_FIX.sql` once in Supabase SQL Editor before deploying this package.
+
+For a fresh upgrade that has not received the stable-complete database changes, run `10_STABLE_COMPLETE_UPGRADE_PATCH.sql` first and then `11_TRANSACTION_ATTENDANCE_FIX.sql`.
 
 ## Deployment
 
