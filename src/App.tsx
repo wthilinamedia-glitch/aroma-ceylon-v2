@@ -2470,8 +2470,18 @@ function PayrollManager({
         .eq('id', draft.id)
       if (finalizeError) throw finalizeError
 
-      setMessage('Payroll finalized and PDF payslip created.')
-      onChanged()
+const { error: pushError } = await supabase.functions.invoke('send-payslip-push', {
+  body: {
+    payroll_id: draft.id,
+  },
+})
+
+if (pushError) {
+  console.warn('Payslip notification delivery failed:', pushError.message)
+}
+
+setMessage('Payroll finalized and PDF payslip created.')
+onChanged()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to finalize payroll.')
     } finally {
