@@ -28,9 +28,11 @@ public class AromaFirebaseMessagingService extends FirebaseMessagingService {
         ensureChannel();
 
         Map<String, String> data = remoteMessage.getData();
-        String title = data.get("title");
-        String body = data.get("body");
-        String threadId = data.get("thread_id");
+String title = data.get("title");
+String body = data.get("body");
+String view = data.get("view");
+String threadId = data.get("thread_id");
+String payrollId = data.get("payroll_id");
 
         if (remoteMessage.getNotification() != null) {
             if (title == null || title.isEmpty()) title = remoteMessage.getNotification().getTitle();
@@ -41,15 +43,33 @@ public class AromaFirebaseMessagingService extends FirebaseMessagingService {
         if (body == null || body.isEmpty()) body = "You have a new message.";
 
         Intent intent = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        if (threadId != null && !threadId.isEmpty()) intent.putExtra("thread_id", threadId);
+        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this,
-                threadId == null ? 0 : threadId.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+if (view != null && !view.isEmpty()) {
+    intent.putExtra("view", view);
+}
+
+if (threadId != null && !threadId.isEmpty()) {
+    intent.putExtra("thread_id", threadId);
+}
+
+if (payrollId != null && !payrollId.isEmpty()) {
+    intent.putExtra("payroll_id", payrollId);
+}
+
+String notificationKey =
+        threadId != null && !threadId.isEmpty()
+                ? "thread-" + threadId
+                : payrollId != null && !payrollId.isEmpty()
+                    ? "payroll-" + payrollId
+                    : String.valueOf(System.currentTimeMillis());
+
+PendingIntent pendingIntent = PendingIntent.getActivity(
+        this,
+        notificationKey.hashCode(),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+);
 
         Notification notification = new Notification.Builder(this, MainActivity.NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_aroma)
