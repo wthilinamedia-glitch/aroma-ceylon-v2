@@ -614,7 +614,13 @@ function StatusBadge({ status }: { status: ExpenseStatus }) {
 }
 
 
-function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
+function PasswordSetupScreen({
+  onComplete,
+  mode = 'invite',
+}: {
+  onComplete: () => void
+  mode?: 'invite' | 'recovery'
+}) {
   const [language, setLanguage] = useState<AppLanguage>(() => localStorage.getItem('aroma-login-language') === 'si' ? 'si' : 'en')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
