@@ -233,14 +233,22 @@ private String pendingPayrollId;
     }
 
     private void consumeNotificationIntent(Intent intent) {
-        if (intent == null) return;
-        String threadId = intent.getStringExtra("thread_id");
-        if (threadId != null && !threadId.trim().isEmpty()) {
-            pendingThreadId = threadId.trim();
-            dispatchPendingPushOpen();
-        }
-    }
+    if (intent == null) return;
 
+    String view = intent.getStringExtra("view");
+    String threadId = intent.getStringExtra("thread_id");
+    String payrollId = intent.getStringExtra("payroll_id");
+
+    pendingView = view == null ? null : view.trim();
+    pendingThreadId = threadId == null ? null : threadId.trim();
+    pendingPayrollId = payrollId == null ? null : payrollId.trim();
+
+    if ((pendingView != null && !pendingView.isEmpty())
+            || (pendingThreadId != null && !pendingThreadId.isEmpty())
+            || (pendingPayrollId != null && !pendingPayrollId.isEmpty())) {
+        dispatchPendingPushOpen();
+    }
+}
     private void dispatchPendingPushOpen() {
         if (!webReady || webView == null || pendingThreadId == null || pendingThreadId.isEmpty()) return;
         String threadId = pendingThreadId;
