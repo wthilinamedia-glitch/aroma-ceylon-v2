@@ -705,8 +705,12 @@ function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
           </label>
           {message && <p className="error-message">{message}</p>}
           <button className="primary-button" disabled={busy} type="submit">
-            {busy ? 'Saving…' : 'Activate account'}
-          </button>
+  {busy
+    ? 'Saving…'
+    : mode === 'recovery'
+      ? 'Update password'
+      : 'Activate account'}
+</button>
         </form>
       </section>
     </main>
