@@ -50,6 +50,18 @@ jobs:
       - name: Copy web build into Android app
         run: npm run android:prepare-assets
 
+      - name: Configure Firebase Android app
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$FIREBASE_GOOGLE_SERVICES_JSON" ]; then
+            echo "FIREBASE_GOOGLE_SERVICES_JSON is not set"
+            exit 1
+          fi
+
+          printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          echo "Firebase Android configuration added."
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
