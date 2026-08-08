@@ -50,7 +50,9 @@ public class MainActivity extends Activity {
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
     private boolean webReady = false;
-    private String pendingThreadId;
+    private String pendingView;
+private String pendingThreadId;
+private String pendingPayrollId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
