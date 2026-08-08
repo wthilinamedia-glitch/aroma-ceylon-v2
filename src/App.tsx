@@ -3975,13 +3975,32 @@ function Dashboard({ profile }: { profile: Profile }) {
       setActiveView('messages')
     }
 
-    function openPush(event: CustomEvent<{ view?: string; threadId?: string }>) {
-      if (event.detail?.view !== 'messages') return
-      const threadId = event.detail.threadId || consumeAndroidPendingThreadId() || null
-      setPushThreadId(threadId)
-      setActiveView('messages')
-      consumeAndroidPendingThreadId()
-    }
+    function openPush(
+  event: CustomEvent<{
+    view?: string
+    threadId?: string
+    payrollId?: string
+  }>,
+) {
+  const view = event.detail?.view
+
+  if (view === 'messages') {
+    const threadId =
+      event.detail.threadId ||
+      consumeAndroidPendingThreadId() ||
+      null
+
+    setPushThreadId(threadId)
+    setActiveView('messages')
+    consumeAndroidPendingThreadId()
+    return
+  }
+
+  if (view === 'payslips') {
+    setPushThreadId(null)
+    setActiveView('payslips')
+  }
+}
     window.addEventListener('aroma-push-open', openPush)
     return () => window.removeEventListener('aroma-push-open', openPush)
   }, [androidApp])
