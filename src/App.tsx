@@ -4183,13 +4183,22 @@ export default function App() {
     return hash.get('type') === 'invite' || query.get('type') === 'invite'
   })
 
+  const [recoveryMode, setRecoveryMode] = useState(false)
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      if (!nextSession) setProfile(null)
-    })
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+  setSession(nextSession)
+
+  if (event === 'PASSWORD_RECOVERY') {
+    setRecoveryMode(true)
+  }
+
+  if (!nextSession) {
+    setProfile(null)
+  }
+})
 
     return () => authListener.subscription.unsubscribe()
   }, [])
