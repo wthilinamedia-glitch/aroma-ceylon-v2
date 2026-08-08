@@ -25,6 +25,8 @@ type MessagesCenterProps = {
   profiles: Profile[]
   language: AppLanguage
   onUnreadChanged?: () => void | Promise<void>
+  initialThreadId?: string | null
+  onInitialThreadHandled?: () => void
 }
 
 const allowedAttachmentTypes = new Set([
@@ -42,7 +44,7 @@ function displayDate(value: string, language: AppLanguage) {
   }).format(new Date(value))
 }
 
-export function MessagesCenter({ profile, profiles, language, onUnreadChanged }: MessagesCenterProps) {
+export function MessagesCenter({ profile, profiles, language, onUnreadChanged, initialThreadId, onInitialThreadHandled }: MessagesCenterProps) {
   const isAdmin = profile.role === 'admin'
   const [threads, setThreads] = useState<Thread[]>([])
   const [messages, setMessages] = useState<Message[]>([])
@@ -103,6 +105,13 @@ export function MessagesCenter({ profile, profiles, language, onUnreadChanged }:
       .subscribe()
     return () => { void supabase.removeChannel(channel) }
   }, [load, profile.id])
+
+  async function notifyPush(threadId: string, event: 'thread_created' | 'thread_reply') {
+    const { error: pushError } = await supabase.functions.invoke('send-push', {
+      body: { event, thread_id: threadId },
+    })
+    if (pushError) console.warn('Push notification delivery failed:', pushError.message)
+  }
 
   function validateAttachment(file: File) {
     if (file.size > 10 * 1024 * 1024) throw new Error('Attachment must be 10 MB or smaller.')
@@ -173,6 +182,7 @@ export function MessagesCenter({ profile, profiles, language, onUnreadChanged }:
       })
       if (messageError) throw messageError
       firstMessageCreated = true
+      await notifyPush(threadId, 'thread_created')
 
       setSubject('')
       setBody('')
@@ -207,6 +217,7 @@ export function MessagesCenter({ profile, profiles, language, onUnreadChanged }:
         attachment_path: uploadedPath,
       })
       if (replyError) throw replyError
+      await notifyPush(selected.id, 'thread_reply')
       setReply('')
       setReplyAttachment(null)
       await load()
@@ -244,6 +255,13 @@ export function MessagesCenter({ profile, profiles, language, onUnreadChanged }:
     if (readError) setError(readError.message)
     await load()
   }
+
+  useEffect(() => {
+    if (!initialThreadId || loading) return
+    const target = threads.find((thread) => thread.id === initialThreadId)
+    if (!target) return
+    void openThread(target).finally(() => onInitialThreadHandled?.())
+  }, [initialThreadId, loading, threads])
 
   async function downloadAttachment(path: string) {
     const { data, error: signedError } = await supabase.storage

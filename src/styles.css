@@ -202,7 +202,7 @@ input:focus, select:focus, textarea:focus {
   border-radius: 24px;
   background:
     linear-gradient(115deg, rgba(21,17,13,.96), rgba(60,43,26,.92)),
-    url('/aroma-logo.png') center/cover;
+    url('./assets/aroma-logo.png') center/cover;
   box-shadow: var(--shadow);
 }
 .welcome-panel h1 { margin-bottom: 8px; font-size: clamp(1.9rem, 6vw, 3.4rem); overflow-wrap: anywhere; }
@@ -1480,3 +1480,140 @@ input:focus, select:focus, textarea:focus {
   font-size: 0.88rem;
   line-height: 1.45;
 }
+
+/* Android app-only mobile shell. Browser / Netlify layout is intentionally unchanged. */
+.android-mobile-status,
+.android-bottom-nav { display: none; }
+
+.android-app body {
+  background: #f7f2e8;
+  overscroll-behavior-y: contain;
+}
+
+.android-app .topbar-brand img {
+  object-fit: contain;
+  padding: 3px;
+  background: #fffdf8;
+  border: 1px solid rgba(217, 180, 92, .45);
+}
+
+.android-app .employee-main-nav { display: none; }
+.android-app .dashboard { padding-bottom: calc(98px + env(safe-area-inset-bottom)); }
+
+.android-app .android-mobile-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 0 0 12px;
+}
+.android-app .android-mobile-status article,
+.android-app .android-mobile-status button {
+  min-width: 0;
+  padding: 13px;
+  text-align: left;
+  color: var(--ink);
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+}
+.android-app .android-mobile-status button { cursor: pointer; }
+.android-app .android-mobile-status span,
+.android-app .android-mobile-status strong { display: block; }
+.android-app .android-mobile-status span {
+  color: #827367;
+  font-size: .67rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.android-app .android-mobile-status strong {
+  margin-top: 5px;
+  font-size: .8rem;
+  line-height: 1.28;
+}
+
+.android-app .employee-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.android-app .employee-summary-card {
+  padding: 12px 10px;
+  border-radius: 14px;
+}
+.android-app .employee-summary-card span { font-size: .62rem; line-height: 1.25; }
+.android-app .employee-summary-card strong { font-size: .9rem; }
+
+/* Attendance, payslips, messages and profile live in the native-style bottom nav. */
+.android-app .employee-action-attendance,
+.android-app .employee-action-payslips,
+.android-app .employee-action-messages,
+.android-app .employee-action-profile { display: none; }
+.android-app .employee-home-grid { grid-template-columns: 1fr; gap: 10px; }
+.android-app .employee-home-card { padding: 15px; border-radius: 17px; }
+
+.android-app .android-bottom-nav {
+  position: fixed;
+  z-index: 60;
+  left: 10px;
+  right: 10px;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+  padding: 7px;
+  background: rgba(24, 18, 13, .97);
+  border: 1px solid rgba(217, 180, 92, .32);
+  border-radius: 22px;
+  box-shadow: 0 16px 38px rgba(32, 23, 15, .3);
+  backdrop-filter: blur(16px);
+}
+.android-app .android-bottom-nav button {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 5px 2px;
+  color: #d9ccb2;
+  background: transparent;
+  border: 0;
+  border-radius: 16px;
+  font-size: .57rem;
+  font-weight: 800;
+}
+.android-app .android-bottom-nav button.active {
+  color: #fff7e3;
+  background: linear-gradient(145deg, rgba(133, 88, 8, .88), rgba(185, 130, 24, .72));
+}
+.android-app .android-bottom-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.android-app .android-bottom-nav em {
+  position: absolute;
+  top: 4px;
+  right: 7px;
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  color: #fff;
+  background: #b83d35;
+  border-radius: 999px;
+  font-size: .55rem;
+  font-style: normal;
+}
+
+@media (max-width: 430px) {
+  .android-app .topbar { padding-left: 12px; padding-right: 12px; }
+  .android-app .topbar-brand { gap: 8px; }
+  .android-app .topbar-brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .android-app .topbar-actions { gap: 5px; }
+  .android-app .language-select select { min-width: 96px; }
+  .android-app .employee-welcome-panel { padding: 19px; }
+  .android-app .employee-welcome-panel h1 { font-size: 2rem; }
+}
+.android-app .android-notification-settings { margin-top: 14px; }

@@ -1,36 +1,39 @@
 # Aroma Ceylon Android Test APK
 
-This project includes a lightweight Android WebView wrapper and a GitHub Actions workflow that builds an installable debug APK from the same React/Vite source used by Netlify.
+The project contains a lightweight native Android WebView shell around the same React/Vite business app used by Netlify. Android-only styling is activated only inside the APK, so the browser UI remains visually unchanged.
 
-## What this test APK supports
+## Current Android features
 
-- Supabase login and role-based data
+- Supabase authentication and shared live business data
 - English / Sinhala interface
-- Attendance, payroll, products, shops, sales, invoices and reports
-- File selection for bills, product images and message attachments
-- Standard HTTP/HTTPS PDF downloads
+- Android-specific employee bottom navigation
+- Attendance, payroll, products, shops, sales, invoices, messages and reports
+- Bill/photo/document file selection
+- PDF downloads
 - Android back navigation
+- Firebase Cloud Messaging push-notification support
+- Notification tap -> Messages/thread deep link
 
-## Before running the workflow
+## GitHub repository secrets
 
-Add these two GitHub repository secrets under **Settings → Secrets and variables → Actions**:
+Required for the normal app build:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Use the same values already configured in Netlify.
+Required to enable Android push notifications:
+
+- `FIREBASE_GOOGLE_SERVICES_JSON`
+
+See `ANDROID_MOBILE_PUSH_SETUP_GUIDE.md` for Firebase and Supabase Edge Function setup.
 
 ## Build the APK
 
-1. Upload this project's files to the GitHub repository.
-2. Open the repository's **Actions** tab.
-3. Select **Build Aroma Ceylon Android APK**.
-4. Choose **Run workflow**.
-5. After the run is green, open it and download the **Aroma-Ceylon-Android-APK** artifact.
-6. Extract the artifact ZIP and install `Aroma-Ceylon-Android-Test.apk` on an Android device.
+1. Upload the project files to GitHub.
+2. Open **Actions**.
+3. Open **Build Aroma Ceylon Android APK**.
+4. Run it on `main`.
+5. When green, download the **Aroma-Ceylon-Android-APK** artifact.
+6. Extract and install `Aroma-Ceylon-Android-Test.apk`.
 
-Android may ask you to allow installation from the browser or file manager used to open the APK.
-
-## Important
-
-This is a debug test APK, not the final Play Store release. The final release will need a private signing key, an Android App Bundle (`.aab`), privacy-policy/store assets, push notifications through Firebase Cloud Messaging, and device testing.
+This is a debug test APK, not the final Play Store release.

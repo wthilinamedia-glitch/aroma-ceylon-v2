@@ -9,6 +9,9 @@ import { SalesManager } from './SalesManager'
 import { MessagesCenter } from './MessagesCenter'
 import { OperationsHub } from './OperationsHub'
 import { type AppLanguage, t, useAutoTranslate } from './i18n'
+import brandLogoUrl from './assets/aroma-logo.png'
+import appIconUrl from './assets/icon-192.png'
+import { consumeAndroidPendingThreadId, disableCurrentAndroidPushDevice, isAndroidApp, openAndroidNotificationSettings, useAndroidPushRegistration } from './androidBridge'
 
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
@@ -661,7 +664,7 @@ function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
             <option value="si">සිංහල</option>
           </select>
         </label>
-        <img className="brand-logo" src="/aroma-logo.png" alt="Aroma Ceylon" />
+        <img className="brand-logo" src={brandLogoUrl} alt="Aroma Ceylon" />
         <div className="brand-divider" />
         <p className="eyebrow">EMPLOYEE INVITATION</p>
         <h1>Create your password</h1>
@@ -734,7 +737,7 @@ function LoginScreen() {
             <option value="si">සිංහල</option>
           </select>
         </label>
-        <img className="brand-logo" src="/aroma-logo.png" alt="Aroma Ceylon" />
+        <img className="brand-logo" src={brandLogoUrl} alt="Aroma Ceylon" />
         <div className="brand-divider" />
         <p className="eyebrow">BUSINESS MANAGEMENT</p>
         <h1>Welcome back</h1>
@@ -1976,6 +1979,8 @@ function EmployeeHome({
   const halfDays = currentAttendance.filter((item) => item.status === 'half_day').length
   const pending = expenses.filter((item) => item.status === 'pending').length
   const latestPayslip = [...payrolls].sort((a, b) => b.period_start.localeCompare(a.period_start))[0]
+  const todayAttendance = attendance.find((item) => item.work_date === localIsoDate())
+  const todayStatus = todayAttendance ? t(todayAttendance.status, language) : (language === 'si' ? 'අද පැමිණීම සටහන් කර නැහැ' : 'Attendance not marked yet')
 
   const actions: { view: View; title: string; copy: string; icon: string; badge?: string }[] = [
     { view: 'expense', title: t('Submit expense', language), copy: t('Add a business expense and optional bill photo.', language), icon: '+' },
@@ -1995,6 +2000,17 @@ function EmployeeHome({
         <p>Your personal Aroma Ceylon workspace keeps expenses, attendance and salary information in one secure place.</p>
       </section>
 
+      <section className="android-mobile-status" aria-label="Today and notifications">
+        <article>
+          <span>{language === 'si' ? 'අද' : 'Today'}</span>
+          <strong>{todayStatus}</strong>
+        </article>
+        <button type="button" onClick={() => onOpen('messages')}>
+          <span>{language === 'si' ? 'පණිවිඩ' : 'Messages'}</span>
+          <strong>{unreadMessages > 0 ? (language === 'si' ? `නොකියවූ ${unreadMessages}` : `${unreadMessages} unread`) : (language === 'si' ? 'අලුත් පණිවිඩ නැහැ' : 'All caught up')}</strong>
+        </button>
+      </section>
+
       <section className="employee-summary-grid">
         <article className="employee-summary-card">
           <span>Pending expenses</span>
@@ -2012,7 +2028,7 @@ function EmployeeHome({
 
       <section className="employee-home-grid" aria-label="Employee tools">
         {actions.map((action) => (
-          <button className="employee-home-card" type="button" key={action.view} onClick={() => onOpen(action.view)}>
+          <button className={`employee-home-card employee-action-${action.view}`} data-view={action.view} type="button" key={action.view} onClick={() => onOpen(action.view)}>
             <span className="employee-home-icon">{action.icon}</span>
             <span className="employee-home-copy">
               <strong>{action.title}</strong>
@@ -2027,7 +2043,46 @@ function EmployeeHome({
   )
 }
 
-function ProfilePanel({ profile, onBack, onContactAdmin }: { profile: Profile; onBack?: () => void; onContactAdmin?: () => void }) {
+
+function AndroidEmployeeBottomNav({
+  activeView,
+  onOpen,
+  unreadMessages,
+  language,
+}: {
+  activeView: View
+  onOpen: (view: View) => void
+  unreadMessages: number
+  language: AppLanguage
+}) {
+  const items: { view: View; label: string; icon: string }[] = [
+    { view: 'dashboard', label: language === 'si' ? 'මුල් පිටුව' : 'Home', icon: '⌂' },
+    { view: 'messages', label: language === 'si' ? 'පණිවිඩ' : 'Messages', icon: '✉' },
+    { view: 'attendance', label: language === 'si' ? 'පැමිණීම' : 'Attendance', icon: '✓' },
+    { view: 'payslips', label: language === 'si' ? 'වැටුප්' : 'Payslips', icon: '€' },
+    { view: 'profile', label: language === 'si' ? 'පැතිකඩ' : 'Profile', icon: '◉' },
+  ]
+  const normalizedView: View = ['expense', 'transactions'].includes(activeView) ? 'dashboard' : activeView
+
+  return (
+    <nav className="android-bottom-nav" aria-label="Android employee navigation">
+      {items.map((item) => (
+        <button
+          type="button"
+          key={item.view}
+          className={normalizedView === item.view ? 'active' : ''}
+          onClick={() => onOpen(item.view)}
+        >
+          <span className="android-bottom-icon">{item.icon}</span>
+          <span>{item.label}</span>
+          {item.view === 'messages' && unreadMessages > 0 && <em>{unreadMessages}</em>}
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+function ProfilePanel({ profile, onBack, onContactAdmin, language }: { profile: Profile; onBack?: () => void; onContactAdmin?: () => void; language: AppLanguage }) {
   const details = [
     ['Full name', profile.full_name || 'Not set'],
     ['Email', profile.email || 'Not set'],
@@ -2057,6 +2112,11 @@ function ProfilePanel({ profile, onBack, onContactAdmin }: { profile: Profile; o
             </div>
           ))}
         </div>
+        {isAndroidApp() && (
+          <button className="secondary-button android-notification-settings" type="button" onClick={openAndroidNotificationSettings}>
+            {language === 'si' ? 'දැනුම්දීම් සැකසුම්' : 'Notification settings'}
+          </button>
+        )}
         {onContactAdmin && (
           <button className="primary-button profile-contact-button" type="button" onClick={onContactAdmin}>
             Contact admin
@@ -3697,6 +3757,8 @@ function ShopManager({
 
 function Dashboard({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === 'admin'
+  const androidApp = isAndroidApp()
+  useAndroidPushRegistration(profile.id)
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
   const [activeView, setActiveView] = useState<View>('dashboard')
   const [income, setIncome] = useState<IncomeRecord[]>([])
@@ -3709,6 +3771,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
   const [unreadMessages, setUnreadMessages] = useState(0)
+  const [pushThreadId, setPushThreadId] = useState<string | null>(null)
   const [language, setLanguage] = useState<AppLanguage>(() => {
     const saved = localStorage.getItem(`aroma-language-${profile.id}`)
     if (saved === 'si' || saved === 'en') return saved
@@ -3836,6 +3899,26 @@ function Dashboard({ profile }: { profile: Profile }) {
     return () => { void supabase.removeChannel(channel) }
   }, [loadUnreadMessages, profile.id])
 
+  useEffect(() => {
+    if (!androidApp) return
+
+    const pendingThread = consumeAndroidPendingThreadId()
+    if (pendingThread) {
+      setPushThreadId(pendingThread)
+      setActiveView('messages')
+    }
+
+    function openPush(event: CustomEvent<{ view?: string; threadId?: string }>) {
+      if (event.detail?.view !== 'messages') return
+      const threadId = event.detail.threadId || consumeAndroidPendingThreadId() || null
+      setPushThreadId(threadId)
+      setActiveView('messages')
+      consumeAndroidPendingThreadId()
+    }
+    window.addEventListener('aroma-push-open', openPush)
+    return () => window.removeEventListener('aroma-push-open', openPush)
+  }, [androidApp])
+
   const profileNames = useMemo(() => {
     const map = new Map<string, string>()
     profiles.forEach((item) => map.set(item.id, item.full_name || item.email || 'User'))
@@ -3858,6 +3941,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   }, [income, expenses])
 
   async function logout() {
+    await disableCurrentAndroidPushDevice()
     await supabase.auth.signOut()
   }
 
@@ -3888,7 +3972,7 @@ function Dashboard({ profile }: { profile: Profile }) {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <img src="/icon-192.png" alt="" />
+          <img src={appIconUrl} alt="" />
           <div>
             <strong>Aroma Ceylon</strong>
             <span>{isAdmin ? 'Administrator' : 'Team Member'}</span>
@@ -4049,7 +4133,7 @@ function Dashboard({ profile }: { profile: Profile }) {
           ) : (
             <div className="stacked-sections">
               {employeeBack && <EmployeeBackButton onBack={employeeBack} />}
-              <MessagesCenter profile={profile} profiles={profiles} language={language} onUnreadChanged={loadUnreadMessages} />
+              <MessagesCenter profile={profile} profiles={profiles} language={language} onUnreadChanged={loadUnreadMessages} initialThreadId={pushThreadId} onInitialThreadHandled={() => setPushThreadId(null)} />
             </div>
           )
         )}
@@ -4074,8 +4158,16 @@ function Dashboard({ profile }: { profile: Profile }) {
             <PayslipsPanel profile={profile} payrolls={payrolls} onBack={employeeBack} />
           )
         )}
-        {activeView === 'profile' && !isAdmin && <ProfilePanel profile={profile} onBack={employeeBack} onContactAdmin={() => setActiveView('messages')} />}
+        {activeView === 'profile' && !isAdmin && <ProfilePanel profile={profile} onBack={employeeBack} onContactAdmin={() => setActiveView('messages')} language={language} />}
       </main>
+      {androidApp && !isAdmin && (
+        <AndroidEmployeeBottomNav
+          activeView={activeView}
+          onOpen={setActiveView}
+          unreadMessages={unreadMessages}
+          language={language}
+        />
+      )}
     </div>
   )
 }
@@ -4137,7 +4229,7 @@ export default function App() {
   if (loading) {
     return (
       <main className="loading-page">
-        <img src="/icon-192.png" alt="Aroma Ceylon" />
+        <img src={appIconUrl} alt="Aroma Ceylon" />
         <p>Loading secure workspace…</p>
       </main>
     )

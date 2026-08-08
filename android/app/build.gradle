@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+// Firebase configuration is injected by GitHub Actions from a repository secret.
+// Keeping the Google Services plugin conditional lets non-push test builds compile too.
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
 android {
     namespace 'com.aromaceylon.business'
     compileSdk 35
@@ -10,8 +16,8 @@ android {
         applicationId 'com.aromaceylon.business'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '1.0-test'
+        versionCode 2
+        versionName '1.1-test'
     }
 
     buildTypes {
@@ -34,4 +40,9 @@ android {
             excludes += ['/META-INF/{AL2.0,LGPL2.1}']
         }
     }
+}
+
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:34.16.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }

@@ -3,13 +3,13 @@ package com.aromaceylon.business;
 import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.net.ConnectivityManager;
-import android.net.Network;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,6 +19,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -32,13 +33,24 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.FirebaseMessaging;
+
+import org.json.JSONObject;
+
 public class MainActivity extends Activity {
+    static final String NOTIFICATION_CHANNEL_ID = "aroma_messages";
+    static final String PUSH_PREFS = "aroma_push";
+    static final String PUSH_TOKEN_KEY = "fcm_token";
+
     private static final int FILE_CHOOSER_REQUEST = 2101;
-    private static final int STORAGE_PERMISSION_REQUEST = 2102;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 2103;
 
     private WebView webView;
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
+    private boolean webReady = false;
+    private String pendingThreadId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,7 +76,10 @@ public class MainActivity extends Activity {
         root.addView(progressBar);
 
         setContentView(root);
+        createNotificationChannel();
+        consumeNotificationIntent(getIntent());
         configureWebView();
+        initializePushMessaging();
 
         if (savedInstanceState == null) {
             webView.loadUrl("file:///android_asset/www/index.html");
@@ -86,7 +101,7 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " AromaCeylonAndroid/1.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " AromaCeylonAndroid/1.1");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
             settings.setAllowFileAccessFromFileURLs(true);
@@ -98,8 +113,10 @@ public class MainActivity extends Activity {
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
         WebView.setWebContentsDebuggingEnabled(
-    (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
-);
+                (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        );
+
+        webView.addJavascriptInterface(new AndroidBridge(), "AromaAndroid");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -110,6 +127,14 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handleUrl(Uri.parse(url));
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                webReady = true;
+                dispatchStoredPushToken();
+                dispatchPendingPushOpen();
             }
 
             @Override
@@ -162,6 +187,92 @@ public class MainActivity extends Activity {
         });
 
         webView.setDownloadListener(createDownloadListener());
+    }
+
+    private void initializePushMessaging() {
+        try {
+            FirebaseApp app = FirebaseApp.initializeApp(this);
+            if (app == null && FirebaseApp.getApps(this).isEmpty()) {
+                return;
+            }
+            FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+                if (!task.isSuccessful() || task.getResult() == null) return;
+                savePushToken(task.getResult());
+                dispatchPushToken(task.getResult());
+            });
+        } catch (Exception ignored) {
+            // The APK can still run without Firebase configuration. Push becomes active
+            // automatically once google-services.json is provided at build time.
+        }
+    }
+
+    private void savePushToken(String token) {
+        getSharedPreferences(PUSH_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PUSH_TOKEN_KEY, token)
+                .apply();
+    }
+
+    private String getStoredPushToken() {
+        return getSharedPreferences(PUSH_PREFS, MODE_PRIVATE)
+                .getString(PUSH_TOKEN_KEY, "");
+    }
+
+    private void dispatchStoredPushToken() {
+        String token = getStoredPushToken();
+        if (token != null && !token.isEmpty()) dispatchPushToken(token);
+    }
+
+    private void dispatchPushToken(String token) {
+        if (!webReady || webView == null || token == null || token.isEmpty()) return;
+        String script = "window.dispatchEvent(new CustomEvent('aroma-push-token',{detail:{token:" +
+                JSONObject.quote(token) + "}}));";
+        webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    private void consumeNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String threadId = intent.getStringExtra("thread_id");
+        if (threadId != null && !threadId.trim().isEmpty()) {
+            pendingThreadId = threadId.trim();
+            dispatchPendingPushOpen();
+        }
+    }
+
+    private void dispatchPendingPushOpen() {
+        if (!webReady || webView == null || pendingThreadId == null || pendingThreadId.isEmpty()) return;
+        String threadId = pendingThreadId;
+        String script = "window.dispatchEvent(new CustomEvent('aroma-push-open',{detail:{view:'messages',threadId:" +
+                JSONObject.quote(threadId) + "}}));";
+        webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    private void createNotificationChannel() {
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationChannel channel = new NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "Aroma Ceylon messages",
+                NotificationManager.IMPORTANCE_HIGH
+        );
+        channel.setDescription("Messages, replies and company announcements");
+        channel.enableVibration(true);
+        manager.createNotificationChannel(channel);
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    NOTIFICATION_PERMISSION_REQUEST
+            );
+        }
+    }
+
+    private void openNotificationSettings() {
+        Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+        startActivity(intent);
     }
 
     private boolean handleUrl(Uri uri) {
@@ -226,6 +337,20 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        dispatchStoredPushToken();
+        dispatchPendingPushOpen();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        consumeNotificationIntent(intent);
+    }
+
+    @Override
     protected void onSaveInstanceState(Bundle outState) {
         webView.saveState(outState);
         super.onSaveInstanceState(outState);
@@ -250,5 +375,38 @@ public class MainActivity extends Activity {
             webView.destroy();
         }
         super.onDestroy();
+    }
+
+    private class AndroidBridge {
+        @JavascriptInterface
+        public String getPushToken() {
+            return getStoredPushToken();
+        }
+
+        @JavascriptInterface
+        public String consumePendingThreadId() {
+            String current = pendingThreadId == null ? "" : pendingThreadId;
+            pendingThreadId = null;
+            return current;
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception ignored) {
+                return "android";
+            }
+        }
+
+        @JavascriptInterface
+        public void requestNotificationPermission() {
+            runOnUiThread(MainActivity.this::requestNotificationPermission);
+        }
+
+        @JavascriptInterface
+        public void openNotificationSettings() {
+            runOnUiThread(MainActivity.this::openNotificationSettings);
+        }
     }
 }
