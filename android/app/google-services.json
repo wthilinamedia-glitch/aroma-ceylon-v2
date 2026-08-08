@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "511316406122",
+    "project_id": "aroma-ceylon",
+    "storage_bucket": "aroma-ceylon.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:511316406122:android:762cf93123e3aca1a57f13",
+        "android_client_info": {
+          "package_name": "com.aromaceylon.business"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAVSft2KivWyGC2bnDPH2LDTJLwiYMR3LA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
