@@ -801,6 +801,22 @@ function LoginScreen() {
             />
           </label>
 
+          <button
+  type="button"
+  onClick={forgotPassword}
+  disabled={busy}
+  style={{
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    alignSelf: 'flex-end',
+  }}
+>
+  Forgot password?
+</button>
+
           {message && <p className="error-message">{message}</p>}
 
           <button className="primary-button" disabled={busy} type="submit">
