@@ -666,9 +666,19 @@ function PasswordSetupScreen({ onComplete }: { onComplete: () => void }) {
         </label>
         <img className="brand-logo" src={brandLogoUrl} alt="Aroma Ceylon" />
         <div className="brand-divider" />
-        <p className="eyebrow">EMPLOYEE INVITATION</p>
-        <h1>Create your password</h1>
-        <p className="muted">Set a secure password to finish activating your Aroma Ceylon account.</p>
+        <p className="eyebrow">
+  {mode === 'recovery' ? 'PASSWORD RECOVERY' : 'EMPLOYEE INVITATION'}
+</p>
+
+<h1>
+  {mode === 'recovery' ? 'Create a new password' : 'Create your password'}
+</h1>
+
+<p className="muted">
+  {mode === 'recovery'
+    ? 'Set a new secure password for your Aroma Ceylon account.'
+    : 'Set a secure password to finish activating your Aroma Ceylon account.'}
+</p>
 
         <form onSubmit={savePassword} className="login-form">
           <label>
