@@ -4256,6 +4256,15 @@ export default function App() {
 
   if (!session) return <LoginScreen />
 
+  if (recoveryMode) {
+  return (
+    <PasswordSetupScreen
+      mode="recovery"
+      onComplete={() => setRecoveryMode(false)}
+    />
+  )
+}
+
   if (inviteMode) return <PasswordSetupScreen onComplete={() => setInviteMode(false)} />
 
   if (fatalError) {
