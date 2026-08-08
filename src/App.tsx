@@ -740,7 +740,28 @@ function LoginScreen() {
     if (error) setMessage(error.message)
     setBusy(false)
   }
+  async function forgotPassword() {
+  if (!email.trim()) {
+    setMessage('Enter your email address first.')
+    return
+  }
 
+  setBusy(true)
+  setMessage('')
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+    redirectTo: `${window.location.origin}/`,
+  })
+
+  setBusy(false)
+
+  if (error) {
+    setMessage(error.message)
+    return
+  }
+
+  setMessage('Password reset link sent. Please check your email.')
+}
   return (
     <main className="auth-page">
       <section className="auth-card">
