@@ -250,13 +250,36 @@ private String pendingPayrollId;
     }
 }
     private void dispatchPendingPushOpen() {
-        if (!webReady || webView == null || pendingThreadId == null || pendingThreadId.isEmpty()) return;
-        String threadId = pendingThreadId;
-        String script = "window.dispatchEvent(new CustomEvent('aroma-push-open',{detail:{view:'messages',threadId:" +
-                JSONObject.quote(threadId) + "}}));";
-        webView.post(() -> webView.evaluateJavascript(script, null));
-    }
+    if (!webReady || webView == null) return;
 
+    boolean hasView = pendingView != null && !pendingView.isEmpty();
+    boolean hasThread = pendingThreadId != null && !pendingThreadId.isEmpty();
+    boolean hasPayroll = pendingPayrollId != null && !pendingPayrollId.isEmpty();
+
+    if (!hasView && !hasThread && !hasPayroll) return;
+
+    String view = hasView
+            ? pendingView
+            : hasThread
+                ? "messages"
+                : "payslips";
+
+    String threadId = hasThread ? pendingThreadId : null;
+    String payrollId = hasPayroll ? pendingPayrollId : null;
+
+    String script =
+            "window.dispatchEvent(new CustomEvent('aroma-push-open',{detail:{" +
+                    "view:" + JSONObject.quote(view) + "," +
+                    "threadId:" + (threadId == null ? "null" : JSONObject.quote(threadId)) + "," +
+                    "payrollId:" + (payrollId == null ? "null" : JSONObject.quote(payrollId)) +
+                    "}}));";
+
+    pendingView = null;
+    pendingThreadId = null;
+    pendingPayrollId = null;
+
+    webView.post(() -> webView.evaluateJavascript(script, null));
+}
     private void createNotificationChannel() {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         NotificationChannel channel = new NotificationChannel(
