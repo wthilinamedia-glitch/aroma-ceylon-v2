@@ -35,11 +35,22 @@ jobs:
           node-version: '24'
           package-manager-cache: false
 
-      - name: Validate Supabase build settings
+      - name: Validate required secrets
         shell: bash
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          test -n "$VITE_SUPABASE_URL" || (echo "Missing GitHub secret: VITE_SUPABASE_URL" && exit 1)
-          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || (echo "Missing GitHub secret: VITE_SUPABASE_PUBLISHABLE_KEY" && exit 1)
+          test -n "$VITE_SUPABASE_URL" || (echo "Missing VITE_SUPABASE_URL" && exit 1)
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || (echo "Missing VITE_SUPABASE_PUBLISHABLE_KEY" && exit 1)
+          test -n "$FIREBASE_GOOGLE_SERVICES_JSON" || (echo "Missing FIREBASE_GOOGLE_SERVICES_JSON" && exit 1)
+          test -n "$ANDROID_KEYSTORE_BASE64" || (echo "Missing ANDROID_KEYSTORE_BASE64" && exit 1)
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || (echo "Missing ANDROID_KEYSTORE_PASSWORD" && exit 1)
+          test -n "$ANDROID_KEY_ALIAS" || (echo "Missing ANDROID_KEY_ALIAS" && exit 1)
+          test -n "$ANDROID_KEY_PASSWORD" || (echo "Missing ANDROID_KEY_PASSWORD" && exit 1)
 
       - name: Install web dependencies
         run: npm install --no-audit --no-fund
@@ -54,13 +65,14 @@ jobs:
         env:
           FIREBASE_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
         run: |
-          if [ -z "$FIREBASE_GOOGLE_SERVICES_JSON" ]; then
-            echo "FIREBASE_GOOGLE_SERVICES_JSON is not set"
-            exit 1
-          fi
-
           printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON" > android/app/google-services.json
-          echo "Firebase Android configuration added."
+
+      - name: Restore permanent Aroma Ceylon signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/aroma-ceylon-release.jks
+          test -s android/app/aroma-ceylon-release.jks
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -79,16 +91,30 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Build debug APK
-        run: gradle -p android assembleDebug --stacktrace
+      - name: Build PERMANENTLY SIGNED RELEASE APK
+        env:
+          ANDROID_KEYSTORE_PATH: aroma-ceylon-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle -p android assembleRelease --stacktrace
+
+      - name: Verify permanent Aroma Ceylon certificate
+        shell: bash
+        run: |
+          CERT_OUTPUT="$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk)"
+          echo "$CERT_OUTPUT"
+          echo "$CERT_OUTPUT" | grep -qi "CN=Aroma Ceylon"
+          echo "$CERT_OUTPUT" | grep -qi "b1d7774629f649c0e92e7f06fd3f085ce1560352963a86356f1084d7a527f9ab"
+          echo "Permanent Aroma Ceylon signing certificate verified."
 
       - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk Aroma-Ceylon-Android-Test.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk Aroma-Ceylon-Android-Release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v6
         with:
-          name: Aroma-Ceylon-Android-APK
-          path: Aroma-Ceylon-Android-Test.apk
+          name: Aroma-Ceylon-Android-Release
+          path: Aroma-Ceylon-Android-Release.apk
           if-no-files-found: error
           retention-days: 30
