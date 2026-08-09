@@ -2301,3 +2301,75 @@ input:focus, select:focus, textarea:focus {
   .recent-activity-item:nth-child(n+4) { border-top: 0; }
   .recent-activity-item:last-child { border-bottom: 0; }
 }
+
+/* Web Admin Dashboard V2 — Polish #1 (browser admin only) */
+@media (min-width: 901px) {
+  .web-admin-shell .topbar-brand strong { font-size: 1.14rem; }
+  .web-admin-shell .topbar-brand small { font-size: .7rem; }
+  .admin-last-updated small { font-size: .7rem; }
+  .admin-language-select span { font-size: .72rem; }
+  .admin-language-select select { font-size: .76rem; }
+  .admin-account-chip strong { font-size: .8rem; }
+  .admin-account-chip small { font-size: .66rem; }
+
+  .admin-nav-label { font-size: .64rem; }
+  .admin-nav-section button {
+    min-height: 46px;
+    padding: 11px 12px;
+    font-size: .84rem;
+  }
+  .admin-nav-icon { font-size: 1rem; }
+  .admin-sidebar-footer { font-size: .66rem; }
+
+  .web-admin-shell .admin-desktop-main { padding: 27px 30px 54px; }
+  .admin-dashboard-intro {
+    padding: 20px 23px;
+    margin-bottom: 18px;
+  }
+  .admin-dashboard-greeting p { font-size: .85rem; }
+  .admin-dashboard-greeting small { font-size: .7rem; }
+  .admin-quick-actions > span { font-size: .7rem; }
+  .quick-action { min-height: 50px; font-size: .75rem; }
+
+  .admin-primary-kpis { gap: 14px; margin-bottom: 14px; }
+  .admin-kpi { min-height: 158px; padding: 19px; }
+  .admin-kpi-copy > span { font-size: .76rem; }
+  .admin-kpi-copy > small { font-size: .71rem; }
+  .admin-kpi-copy > em { font-size: .68rem; }
+  .admin-kpi-copy > button { font-size: .68rem; }
+
+  .admin-secondary-kpis { gap: 12px; margin-bottom: 16px; }
+  .admin-mini-kpi { min-height: 118px; padding: 15px; }
+  .admin-mini-kpi small { font-size: .69rem; }
+  .admin-mini-kpi strong { font-size: .98rem; }
+  .admin-mini-kpi em { font-size: .65rem; }
+  .admin-currency-values strong { font-size: .93rem; }
+  .admin-currency-empty { font-size: .89rem; }
+
+  .admin-dashboard-grid { gap: 14px; margin-bottom: 14px; }
+  .admin-dashboard-card { padding: 19px; }
+  .admin-dashboard-card > header h2 { font-size: .98rem; }
+  .admin-dashboard-card > header p { font-size: .67rem; }
+  .admin-dashboard-card > header button { font-size: .66rem; }
+  .admin-chart-legend { font-size: .66rem; }
+
+  .list-main strong { font-size: .73rem; }
+  .list-main small { font-size: .62rem; }
+  .list-money strong { font-size: .69rem; }
+  .admin-list-row > em { font-size: .57rem; }
+  .admin-list-empty { font-size: .72rem; }
+
+  .recent-card { padding: 19px 19px 17px; }
+  .recent-activity-grid { gap: 0; }
+  .recent-activity-item {
+    grid-template-columns: 34px minmax(0,1fr);
+    gap: 10px;
+    min-height: 128px;
+    padding: 11px 14px;
+  }
+  .activity-icon { width: 33px; height: 33px; font-size: .76rem; }
+  .recent-activity-item small { font-size: .64rem; }
+  .recent-activity-item strong { margin-top: 6px; font-size: .71rem; }
+  .recent-activity-item em { margin-top: 4px; font-size: .61rem; }
+  .recent-activity-item time { margin-top: 9px; font-size: .57rem; }
+}

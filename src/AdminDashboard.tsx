@@ -466,6 +466,14 @@ export function AdminDashboard({
   const profitComparison = comparison(cashProfit, lastCashProfit)
   const activeShopsWithOutstanding = outstandingRows.length
   const salaryDueCount = payrolls.filter((row) => row.status === 'finalized').length
+  const activeProducts = products.filter((row) => row.active)
+  const productsWithCost = activeProducts.filter((row) => Number(row.cost_price || 0) > 0)
+  const activeInventoryCurrencies = Array.from(new Set(activeProducts.map((row) => row.currency).filter(Boolean)))
+  const inventoryEmptyLabel = activeProducts.length === 0
+    ? 'No active items'
+    : activeInventoryCurrencies.length === 1
+      ? money(0, activeInventoryCurrencies[0])
+      : '0.00'
   const statusLoading = loadingData || dashboardLoading
 
   return (
@@ -512,14 +520,14 @@ export function AdminDashboard({
         </article>
         <article className="admin-kpi pending">
           <div className="admin-kpi-icon">◷</div>
-          <div className="admin-kpi-copy"><span>Pending Approvals</span><strong>{pending.length}</strong><small>{formatLKR(pending.reduce((sum, row) => sum + Number(row.amount_lkr || 0), 0))} waiting</small><button onClick={() => onOpen('approvals')}>Review now →</button></div>
+          <div className="admin-kpi-copy"><span>Pending Approvals</span><strong>{pending.length}</strong><small>{pending.length > 0 ? `${formatLKR(pending.reduce((sum, row) => sum + Number(row.amount_lkr || 0), 0))} waiting` : 'Nothing waiting for review'}</small>{pending.length > 0 ? <button onClick={() => onOpen('approvals')}>Review now →</button> : null}</div>
         </article>
       </section>
 
       <section className="admin-secondary-kpis">
         <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▤</span><span><small>Net Sales (This Month)</small><CurrencySummary values={monthlySalesByCurrency} /></span></button>
         <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▣</span><span><small>Outstanding from Shops</small><CurrencySummary values={outstandingByCurrency} /><em>{activeShopsWithOutstanding} shop{activeShopsWithOutstanding === 1 ? '' : 's'}</em></span></button>
-        <button className="admin-mini-kpi" onClick={() => onOpen('inventory')}><span className="mini-icon green">◇</span><span><small>Inventory Cost Value</small><CurrencySummary values={inventoryValueByCurrency} /><em>{products.filter((row) => row.active).length} active items</em></span></button>
+        <button className="admin-mini-kpi" onClick={() => onOpen('inventory')}><span className="mini-icon green">◇</span><span><small>Inventory Cost Value</small><CurrencySummary values={inventoryValueByCurrency} empty={inventoryEmptyLabel} /><em>{activeProducts.length === 0 ? 'No active products' : productsWithCost.length === 0 ? 'Cost price not set' : `${activeProducts.length} active item${activeProducts.length === 1 ? '' : 's'}`}</em></span></button>
         <button className="admin-mini-kpi alert" onClick={() => onOpen('inventory')}><span className="mini-icon red">!</span><span><small>Low Stock Items</small><strong>{lowStock.length}</strong><em>{lowStock.length > 0 ? 'Requires attention' : 'Stock levels healthy'}</em></span></button>
         <button className="admin-mini-kpi" onClick={() => onOpen('payroll')}><span className="mini-icon neutral">♙</span><span><small>Salary Due</small><CurrencySummary values={salaryDueByCurrency} empty="None due" /><em>{salaryDueCount > 0 ? `${salaryDueCount} finalized payroll${salaryDueCount === 1 ? '' : 's'}` : 'No unpaid payroll'}</em></span></button>
       </section>
