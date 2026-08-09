@@ -3995,21 +3995,30 @@ if (pendingView === 'messages' || pendingThread) {
     payrollId?: string
   }>,
 ) {
-  const view = event.detail?.view
+  const pendingView = consumeAndroidPendingView()
+  const pendingThread = consumeAndroidPendingThreadId()
+  const pendingPayrollId = consumeAndroidPendingPayrollId()
+
+  const view = event.detail?.view || pendingView
 
   if (view === 'messages') {
     const threadId =
-      event.detail.threadId ||
-      consumeAndroidPendingThreadId() ||
+      event.detail?.threadId ||
+      pendingThread ||
       null
 
     setPushThreadId(threadId)
     setActiveView('messages')
-    consumeAndroidPendingThreadId()
     return
   }
 
   if (view === 'payslips') {
+    const payrollId =
+      event.detail?.payrollId ||
+      pendingPayrollId ||
+      null
+
+    void payrollId
     setPushThreadId(null)
     setActiveView('payslips')
   }
