@@ -3,10 +3,15 @@ plugins {
 }
 
 // Firebase configuration is injected by GitHub Actions from a repository secret.
-// Keeping the Google Services plugin conditional lets non-push test builds compile too.
 if (file('google-services.json').exists()) {
     apply plugin: 'com.google.gms.google-services'
 }
+
+def signingStorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+def signingStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def signingKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def signingKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = signingStorePath && signingStorePassword && signingKeyAlias && signingKeyPassword
 
 android {
     namespace 'com.aromaceylon.business'
@@ -16,8 +21,19 @@ android {
         applicationId 'com.aromaceylon.business'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '1.2.1-test'
+        versionCode 5
+        versionName '1.2.2-test'
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(signingStorePath)
+                storePassword signingStorePassword
+                keyAlias signingKeyAlias
+                keyPassword signingKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -26,6 +42,9 @@ android {
         }
         release {
             minifyEnabled false
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -39,6 +58,13 @@ android {
         resources {
             excludes += ['/META-INF/{AL2.0,LGPL2.1}']
         }
+    }
+}
+
+// A GitHub release build must never silently fall back to an unsigned APK.
+gradle.taskGraph.whenReady { graph ->
+    if (graph.hasTask(':app:assembleRelease') && !hasReleaseSigning) {
+        throw new GradleException('Release signing secrets are missing. Refusing to build an unsigned Aroma Ceylon release APK.')
     }
 }
 
