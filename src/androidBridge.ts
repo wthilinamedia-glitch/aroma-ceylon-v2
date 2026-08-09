@@ -5,6 +5,8 @@ type NativeAndroidBridge = {
   getPushToken?: () => string
   getAppVersion?: () => string
   consumePendingThreadId?: () => string
+  consumePendingView?: () => string
+  consumePendingPayrollId?: () => string
   requestNotificationPermission?: () => void
   openNotificationSettings?: () => void
 }
