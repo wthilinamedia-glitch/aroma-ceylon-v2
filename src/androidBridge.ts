@@ -112,3 +112,20 @@ export function consumeAndroidPendingThreadId() {
     return ''
   }
 }
+export function consumeAndroidPendingView() {
+  if (!isAndroidApp()) return ''
+  try {
+    return window.AromaAndroid?.consumePendingView?.()?.trim() || ''
+  } catch {
+    return ''
+  }
+}
+
+export function consumeAndroidPendingPayrollId() {
+  if (!isAndroidApp()) return ''
+  try {
+    return window.AromaAndroid?.consumePendingPayrollId?.()?.trim() || ''
+  } catch {
+    return ''
+  }
+}
