@@ -8,18 +8,22 @@ import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
+import android.util.Base64;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
+import android.webkit.MimeTypeMap;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -33,6 +37,11 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
+
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.FirebaseMessaging;
 
@@ -42,6 +51,12 @@ public class MainActivity extends Activity {
     static final String NOTIFICATION_CHANNEL_ID = "aroma_messages";
     static final String PUSH_PREFS = "aroma_push";
     static final String PUSH_TOKEN_KEY = "fcm_token";
+
+    static final String UPLOAD_PREFS = "aroma_pending_upload";
+    static final String UPLOAD_PATH_KEY = "path";
+    static final String UPLOAD_NAME_KEY = "name";
+    static final String UPLOAD_TYPE_KEY = "type";
+    static final String UPLOAD_SIZE_KEY = "size";
 
     private static final int FILE_CHOOSER_REQUEST = 2101;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 2103;
@@ -137,6 +152,7 @@ private String pendingPayrollId;
                 webReady = true;
                 dispatchStoredPushToken();
                 dispatchPendingPushOpen();
+                dispatchPendingUploadReady();
             }
 
             @Override
@@ -166,6 +182,7 @@ private String pendingPayrollId;
                     fileChooserCallback.onReceiveValue(null);
                 }
                 fileChooserCallback = filePathCallback;
+                clearPendingUpload();
 
                 Intent chooserIntent;
                 try {
@@ -189,6 +206,144 @@ private String pendingPayrollId;
         });
 
         webView.setDownloadListener(createDownloadListener());
+    }
+
+    private void cachePendingUpload(Uri uri) {
+        if (uri == null) return;
+
+        String displayName = "bill-photo";
+        String mimeType = getContentResolver().getType(uri);
+
+        try (Cursor cursor = getContentResolver().query(
+                uri,
+                new String[]{OpenableColumns.DISPLAY_NAME},
+                null,
+                null,
+                null
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) {
+                    String candidate = cursor.getString(nameIndex);
+                    if (candidate != null && !candidate.trim().isEmpty()) {
+                        displayName = candidate.trim();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        String extension = "jpg";
+        int dot = displayName.lastIndexOf('.');
+        if (dot >= 0 && dot < displayName.length() - 1) {
+            extension = displayName.substring(dot + 1).replaceAll("[^A-Za-z0-9]", "");
+        } else if (mimeType != null) {
+            String guessed = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
+            if (guessed != null && !guessed.isEmpty()) extension = guessed;
+        }
+        if (extension.isEmpty()) extension = "jpg";
+
+        File uploadDir = new File(getCacheDir(), "pending-uploads");
+        if (!uploadDir.exists() && !uploadDir.mkdirs()) return;
+
+        clearPendingUpload();
+        File cachedFile = new File(uploadDir, "pending-" + System.currentTimeMillis() + "." + extension);
+
+        try (InputStream input = getContentResolver().openInputStream(uri);
+             FileOutputStream output = new FileOutputStream(cachedFile)) {
+            if (input == null) return;
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            output.flush();
+        } catch (Exception error) {
+            if (cachedFile.exists()) cachedFile.delete();
+            return;
+        }
+
+        getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(UPLOAD_PATH_KEY, cachedFile.getAbsolutePath())
+                .putString(UPLOAD_NAME_KEY, displayName)
+                .putString(UPLOAD_TYPE_KEY, mimeType == null ? "image/jpeg" : mimeType)
+                .putLong(UPLOAD_SIZE_KEY, cachedFile.length())
+                .apply();
+    }
+
+    private String pendingUploadJson() {
+        String path = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getString(UPLOAD_PATH_KEY, "");
+        if (path == null || path.isEmpty()) return "";
+
+        File file = new File(path);
+        if (!file.exists()) {
+            clearPendingUpload();
+            return "";
+        }
+
+        String name = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getString(UPLOAD_NAME_KEY, file.getName());
+        String type = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getString(UPLOAD_TYPE_KEY, "image/jpeg");
+        long size = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getLong(UPLOAD_SIZE_KEY, file.length());
+
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("name", name == null ? file.getName() : name);
+            payload.put("type", type == null ? "image/jpeg" : type);
+            payload.put("size", size);
+            return payload.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String readPendingUploadChunk(int offset, int length) {
+        if (offset < 0 || length <= 0) return "";
+
+        String path = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getString(UPLOAD_PATH_KEY, "");
+        if (path == null || path.isEmpty()) return "";
+
+        File file = new File(path);
+        if (!file.exists() || offset >= file.length()) return "";
+
+        int safeLength = Math.min(length, 128 * 1024);
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            input.seek(offset);
+            byte[] buffer = new byte[safeLength];
+            int read = input.read(buffer);
+            if (read <= 0) return "";
+            return Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private void dispatchPendingUploadReady() {
+        if (!webReady || webView == null) return;
+        String payload = pendingUploadJson();
+        if (payload == null || payload.isEmpty()) return;
+        webView.post(() -> webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('aroma-upload-ready',{detail:{}}));",
+                null
+        ));
+    }
+
+    private void clearPendingUpload() {
+        String path = getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE)
+                .getString(UPLOAD_PATH_KEY, "");
+        if (path != null && !path.isEmpty()) {
+            try {
+                File file = new File(path);
+                if (file.exists()) file.delete();
+            } catch (Exception ignored) {
+            }
+        }
+        getSharedPreferences(UPLOAD_PREFS, MODE_PRIVATE).edit().clear().apply();
     }
 
     private void initializePushMessaging() {
@@ -358,11 +513,18 @@ private String pendingPayrollId;
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != FILE_CHOOSER_REQUEST || fileChooserCallback == null) return;
+        if (requestCode != FILE_CHOOSER_REQUEST) return;
 
         Uri[] result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
-        fileChooserCallback.onReceiveValue(result);
-        fileChooserCallback = null;
+        if (result != null && result.length > 0 && result[0] != null) {
+            cachePendingUpload(result[0]);
+        }
+
+        if (fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(result);
+            fileChooserCallback = null;
+        }
+        dispatchPendingUploadReady();
     }
 
     @Override
@@ -439,6 +601,21 @@ public String consumePendingPayrollId() {
             } catch (Exception ignored) {
                 return "android";
             }
+        }
+
+        @JavascriptInterface
+        public String peekPendingUpload() {
+            return pendingUploadJson();
+        }
+
+        @JavascriptInterface
+        public String readPendingUploadChunk(int offset, int length) {
+            return MainActivity.this.readPendingUploadChunk(offset, length);
+        }
+
+        @JavascriptInterface
+        public void clearPendingUpload() {
+            MainActivity.this.clearPendingUpload();
         }
 
         @JavascriptInterface

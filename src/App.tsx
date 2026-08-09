@@ -14,6 +14,7 @@ import appIconUrl from './assets/icon-192.png'
 import {
   consumeAndroidPendingPayrollId,
   consumeAndroidPendingThreadId,
+  consumeAndroidPendingUpload,
   consumeAndroidPendingView,
   disableCurrentAndroidPushDevice,
   isAndroidApp,
@@ -35,6 +36,35 @@ type Profile = {
   monthly_salary: number
   salary_currency: string
   preferred_language?: AppLanguage
+}
+
+const allViews: View[] = [
+  'dashboard', 'income', 'expense', 'approvals', 'transactions', 'employees', 'attendance',
+  'payroll', 'products', 'shops', 'sales', 'messages', 'inventory', 'reports', 'payslips', 'profile',
+]
+
+const employeeViews = new Set<View>(['dashboard', 'expense', 'transactions', 'attendance', 'messages', 'payslips', 'profile'])
+
+function readResumeView(profile: Profile): View {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const hashView = hash.get('view')
+  const sessionView = sessionStorage.getItem(`aroma-resume-view-${profile.id}`)
+  const candidate = (hashView || sessionView || 'dashboard') as View
+  if (!allViews.includes(candidate)) return 'dashboard'
+  if (profile.role !== 'admin' && !employeeViews.has(candidate)) return 'dashboard'
+  return candidate
+}
+
+function persistResumeView(profileId: string, view: View) {
+  sessionStorage.setItem(`aroma-resume-view-${profileId}`, view)
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  hash.set('view', view)
+  const nextHash = hash.toString()
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`,
+  )
 }
 
 type IncomeRecord = {
@@ -205,6 +235,42 @@ function localIsoDate() {
   const now = new Date()
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
   return local.toISOString().slice(0, 10)
+}
+
+type ExpenseDraft = {
+  title: string
+  category: string
+  amount: string
+  expenseDate: string
+  note: string
+}
+
+function expenseDraftKey(profileId: string) {
+  return `aroma-expense-draft-${profileId}`
+}
+
+function loadExpenseDraft(profileId: string): ExpenseDraft {
+  const fallback: ExpenseDraft = {
+    title: '',
+    category: expenseCategories[0],
+    amount: '',
+    expenseDate: localIsoDate(),
+    note: '',
+  }
+  try {
+    const raw = sessionStorage.getItem(expenseDraftKey(profileId))
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as Partial<ExpenseDraft>
+    return {
+      title: typeof parsed.title === 'string' ? parsed.title : fallback.title,
+      category: typeof parsed.category === 'string' && expenseCategories.includes(parsed.category) ? parsed.category : fallback.category,
+      amount: typeof parsed.amount === 'string' ? parsed.amount : fallback.amount,
+      expenseDate: typeof parsed.expenseDate === 'string' && parsed.expenseDate ? parsed.expenseDate : fallback.expenseDate,
+      note: typeof parsed.note === 'string' ? parsed.note : fallback.note,
+    }
+  } catch {
+    return fallback
+  }
 }
 
 function formatLKR(value: number) {
@@ -989,15 +1055,59 @@ function IncomeForm({ profile, onSaved }: { profile: Profile; onSaved: () => voi
 }
 
 function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => void }) {
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState(expenseCategories[0])
-  const [amount, setAmount] = useState('')
-  const [expenseDate, setExpenseDate] = useState(localIsoDate())
-  const [note, setNote] = useState('')
+  const initialDraft = useMemo(() => loadExpenseDraft(profile.id), [profile.id])
+  const [title, setTitle] = useState(initialDraft.title)
+  const [category, setCategory] = useState(initialDraft.category)
+  const [amount, setAmount] = useState(initialDraft.amount)
+  const [expenseDate, setExpenseDate] = useState(initialDraft.expenseDate)
+  const [note, setNote] = useState(initialDraft.note)
   const [bill, setBill] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [compressionInfo, setCompressionInfo] = useState('')
+
+  useEffect(() => {
+    const today = localIsoDate()
+    const dirty = Boolean(
+      title.trim() ||
+      amount.trim() ||
+      note.trim() ||
+      category !== expenseCategories[0] ||
+      expenseDate !== today,
+    )
+
+    if (!dirty) {
+      sessionStorage.removeItem(expenseDraftKey(profile.id))
+      return
+    }
+
+    const draft: ExpenseDraft = { title, category, amount, expenseDate, note }
+    sessionStorage.setItem(expenseDraftKey(profile.id), JSON.stringify(draft))
+  }, [profile.id, title, category, amount, expenseDate, note])
+
+  useEffect(() => {
+    if (!isAndroidApp()) return
+    let cancelled = false
+
+    async function restoreSelectedBill() {
+      const restored = await consumeAndroidPendingUpload()
+      if (!restored || cancelled) return
+      setBill(restored)
+      setMessage('')
+      setCompressionInfo('')
+    }
+
+    function handleNativeUploadReady() {
+      void restoreSelectedBill()
+    }
+
+    void restoreSelectedBill()
+    window.addEventListener('aroma-upload-ready', handleNativeUploadReady)
+    return () => {
+      cancelled = true
+      window.removeEventListener('aroma-upload-ready', handleNativeUploadReady)
+    }
+  }, [])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -1061,6 +1171,7 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
       }
     }
 
+    sessionStorage.removeItem(expenseDraftKey(profile.id))
     setTitle('')
     setCategory(expenseCategories[0])
     setAmount('')
@@ -3834,7 +3945,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const androidApp = isAndroidApp()
   useAndroidPushRegistration(profile.id)
   const displayName = profile.full_name.trim() || (isAdmin ? 'Administrator' : 'Team Member')
-  const [activeView, setActiveView] = useState<View>('dashboard')
+  const [activeView, setActiveView] = useState<View>(() => readResumeView(profile))
   const [income, setIncome] = useState<IncomeRecord[]>([])
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([profile])
@@ -3852,6 +3963,10 @@ function Dashboard({ profile }: { profile: Profile }) {
     return profile.preferred_language === 'si' ? 'si' : 'en'
   })
   useAutoTranslate(language)
+
+  useEffect(() => {
+    persistResumeView(profile.id, activeView)
+  }, [profile.id, activeView])
 
   async function changeLanguage(nextLanguage: AppLanguage) {
     setLanguage(nextLanguage)
@@ -4049,6 +4164,16 @@ if (pendingView === 'messages' || pendingThread) {
   }, [income, expenses])
 
   async function logout() {
+    sessionStorage.removeItem(`aroma-resume-view-${profile.id}`)
+    sessionStorage.removeItem(expenseDraftKey(profile.id))
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    hash.delete('view')
+    const nextHash = hash.toString()
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`,
+    )
     await disableCurrentAndroidPushDevice()
     await supabase.auth.signOut()
   }

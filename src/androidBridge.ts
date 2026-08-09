@@ -9,6 +9,9 @@ type NativeAndroidBridge = {
   consumePendingPayrollId?: () => string
   requestNotificationPermission?: () => void
   openNotificationSettings?: () => void
+  peekPendingUpload?: () => string
+  readPendingUploadChunk?: (offset: number, length: number) => string
+  clearPendingUpload?: () => void
 }
 
 type PushTokenDetail = {
@@ -20,6 +23,12 @@ type PushOpenDetail = {
   threadId?: string
 }
 
+type NativeUploadInfo = {
+  name?: string
+  type?: string
+  size?: number
+}
+
 declare global {
   interface Window {
     AromaAndroid?: NativeAndroidBridge
@@ -28,6 +37,7 @@ declare global {
   interface WindowEventMap {
     'aroma-push-token': CustomEvent<PushTokenDetail>
     'aroma-push-open': CustomEvent<PushOpenDetail>
+    'aroma-upload-ready': CustomEvent<Record<string, never>>
   }
 }
 
@@ -131,3 +141,47 @@ export function consumeAndroidPendingPayrollId() {
     return ''
   }
 }
+
+export async function consumeAndroidPendingUpload() {
+  if (!isAndroidApp()) return null
+
+  try {
+    const raw = window.AromaAndroid?.peekPendingUpload?.()
+    if (!raw) return null
+
+    const info = JSON.parse(raw) as NativeUploadInfo
+    const totalBytes = Number(info.size || 0)
+    const readChunk = window.AromaAndroid?.readPendingUploadChunk
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0 || !readChunk) return null
+
+    const parts: Uint8Array[] = []
+    const chunkSize = 128 * 1024
+    let offset = 0
+
+    while (offset < totalBytes) {
+      const requested = Math.min(chunkSize, totalBytes - offset)
+      const encoded = readChunk(offset, requested)
+      if (!encoded) throw new Error('Android returned an incomplete selected image.')
+
+      const binary = window.atob(encoded)
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+      parts.push(bytes)
+      offset += bytes.byteLength
+    }
+
+    const type = info.type || 'image/jpeg'
+    const blob = new Blob(parts, { type })
+    const name = info.name || `bill-${Date.now()}.jpg`
+    const file = new File([blob], name, { type, lastModified: Date.now() })
+
+    window.AromaAndroid?.clearPendingUpload?.()
+    return file
+  } catch (error) {
+    console.warn('Unable to restore Android selected image:', error)
+    return null
+  }
+}
+
