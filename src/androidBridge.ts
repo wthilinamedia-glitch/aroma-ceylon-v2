@@ -151,8 +151,7 @@ export async function consumeAndroidPendingUpload() {
 
     const info = JSON.parse(raw) as NativeUploadInfo
     const totalBytes = Number(info.size || 0)
-    const readChunk = window.AromaAndroid?.readPendingUploadChunk
-    if (!Number.isFinite(totalBytes) || totalBytes <= 0 || !readChunk) return null
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0 || !window.AromaAndroid?.readPendingUploadChunk) return null
 
     const parts: Uint8Array[] = []
     const chunkSize = 128 * 1024
@@ -160,7 +159,7 @@ export async function consumeAndroidPendingUpload() {
 
     while (offset < totalBytes) {
       const requested = Math.min(chunkSize, totalBytes - offset)
-      const encoded = readChunk(offset, requested)
+      const encoded = window.AromaAndroid?.readPendingUploadChunk?.(offset, requested)
       if (!encoded) throw new Error('Android returned an incomplete selected image.')
 
       const binary = window.atob(encoded)
@@ -177,7 +176,6 @@ export async function consumeAndroidPendingUpload() {
     const name = info.name || `bill-${Date.now()}.jpg`
     const file = new File([blob], name, { type, lastModified: Date.now() })
 
-    window.AromaAndroid?.clearPendingUpload?.()
     return file
   } catch (error) {
     console.warn('Unable to restore Android selected image:', error)
@@ -185,3 +183,11 @@ export async function consumeAndroidPendingUpload() {
   }
 }
 
+export function clearAndroidPendingUpload() {
+  if (!isAndroidApp()) return
+  try {
+    window.AromaAndroid?.clearPendingUpload?.()
+  } catch (error) {
+    console.warn('Unable to clear Android pending upload:', error)
+  }
+}

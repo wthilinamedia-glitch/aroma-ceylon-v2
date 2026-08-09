@@ -43,3 +43,10 @@ The existing `.github/workflows/build-android-apk.yml` from the uploaded latest 
 6. Confirm the selected image name/size appears.
 7. Submit the expense.
 8. Open the saved expense and verify the bill image can be viewed.
+
+
+## Check 10.1 follow-up
+- Keep the native cached image until the expense submission completes instead of clearing it immediately after React restores it.
+- Call Android bridge chunk reads with the native bridge as the receiver.
+- Retry pending-image restore briefly after the picker returns.
+- Replace the browser-owned file-input text with a React-controlled selected-photo status so the UI reflects restored images correctly.

@@ -12,6 +12,7 @@ import { type AppLanguage, t, useAutoTranslate } from './i18n'
 import brandLogoUrl from './assets/aroma-logo.png'
 import appIconUrl from './assets/icon-192.png'
 import {
+  clearAndroidPendingUpload,
   consumeAndroidPendingPayrollId,
   consumeAndroidPendingThreadId,
   consumeAndroidPendingUpload,
@@ -1088,20 +1089,33 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
   useEffect(() => {
     if (!isAndroidApp()) return
     let cancelled = false
+    let restoring = false
 
-    async function restoreSelectedBill() {
-      const restored = await consumeAndroidPendingUpload()
-      if (!restored || cancelled) return
-      setBill(restored)
-      setMessage('')
-      setCompressionInfo('')
+    async function restoreSelectedBill(retries = 0) {
+      if (restoring || cancelled) return
+      restoring = true
+      try {
+        const restored = await consumeAndroidPendingUpload()
+        if (restored && !cancelled) {
+          setBill(restored)
+          setMessage('')
+          setCompressionInfo('')
+          return
+        }
+      } finally {
+        restoring = false
+      }
+
+      if (!cancelled && retries > 0) {
+        window.setTimeout(() => void restoreSelectedBill(retries - 1), 250)
+      }
     }
 
     function handleNativeUploadReady() {
-      void restoreSelectedBill()
+      void restoreSelectedBill(6)
     }
 
-    void restoreSelectedBill()
+    void restoreSelectedBill(6)
     window.addEventListener('aroma-upload-ready', handleNativeUploadReady)
     return () => {
       cancelled = true
@@ -1171,6 +1185,7 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
       }
     }
 
+    clearAndroidPendingUpload()
     sessionStorage.removeItem(expenseDraftKey(profile.id))
     setTitle('')
     setCategory(expenseCategories[0])
@@ -1232,13 +1247,18 @@ function ExpenseForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
 
         <label className="upload-field full-field">
           Bill photo (optional)
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={(event) => setBill(event.target.files?.[0] || null)}
-          />
-          <span>{bill ? `${bill.name} • ${formatBytes(bill.size)}` : 'Take a photo or choose an image. It will be compressed before upload.'}</span>
+          <span className="file-picker-shell">
+            <input
+              className="file-picker-native"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={(event) => setBill(event.target.files?.[0] || null)}
+            />
+            <span className="file-picker-button">{bill ? 'Change photo' : 'Choose photo'}</span>
+            <span className="file-picker-name">{bill ? `${bill.name} • ${formatBytes(bill.size)}` : 'No photo selected'}</span>
+          </span>
+          <span className="file-picker-help">Take a photo or choose an image. It will be compressed before upload.</span>
         </label>
 
         {compressionInfo && <p className="success-message">{compressionInfo}</p>}
