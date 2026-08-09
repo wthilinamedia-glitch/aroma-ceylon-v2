@@ -11,8 +11,15 @@ import { OperationsHub } from './OperationsHub'
 import { type AppLanguage, t, useAutoTranslate } from './i18n'
 import brandLogoUrl from './assets/aroma-logo.png'
 import appIconUrl from './assets/icon-192.png'
-import { consumeAndroidPendingThreadId, disableCurrentAndroidPushDevice, isAndroidApp, openAndroidNotificationSettings, useAndroidPushRegistration } from './androidBridge'
-
+import {
+  consumeAndroidPendingPayrollId,
+  consumeAndroidPendingThreadId,
+  consumeAndroidPendingView,
+  disableCurrentAndroidPushDevice,
+  isAndroidApp,
+  openAndroidNotificationSettings,
+  useAndroidPushRegistration,
+} from './androidBridge'
 type Role = 'admin' | 'user'
 type ExpenseStatus = 'pending' | 'approved' | 'rejected'
 type View = 'dashboard' | 'income' | 'expense' | 'approvals' | 'transactions' | 'employees' | 'attendance' | 'payroll' | 'products' | 'shops' | 'sales' | 'messages' | 'inventory' | 'reports' | 'payslips' | 'profile'
