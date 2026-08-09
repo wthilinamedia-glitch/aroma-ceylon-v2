@@ -8,6 +8,7 @@ import { drawPdfText } from './lib/pdfText'
 import { SalesManager } from './SalesManager'
 import { MessagesCenter } from './MessagesCenter'
 import { OperationsHub } from './OperationsHub'
+import { AdminDashboard } from './AdminDashboard'
 import { type AppLanguage, t, useAutoTranslate } from './i18n'
 import brandLogoUrl from './assets/aroma-logo.png'
 import appIconUrl from './assets/icon-192.png'
@@ -3971,6 +3972,7 @@ function Dashboard({ profile }: { profile: Profile }) {
   const [loadingData, setLoadingData] = useState(true)
   const [dataError, setDataError] = useState('')
   const [unreadMessages, setUnreadMessages] = useState(0)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [pushThreadId, setPushThreadId] = useState<string | null>(null)
   const [language, setLanguage] = useState<AppLanguage>(() => {
     const saved = localStorage.getItem(`aroma-language-${profile.id}`)
@@ -4075,6 +4077,7 @@ function Dashboard({ profile }: { profile: Profile }) {
     }
 
     setLoadingData(false)
+    setLastUpdated(new Date())
   }, [isAdmin, profile])
 
   useEffect(() => {
@@ -4215,10 +4218,38 @@ if (pendingView === 'messages' || pendingThread) {
       ]
 
   const employeeBack = isAdmin ? undefined : () => setActiveView('dashboard')
+  const desktopAdmin = isAdmin && !androidApp
+  const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('') || 'AC'
+  const adminNavSections: { label?: string; items: { view: View; label: string; icon: string }[] }[] = [
+    { items: [
+      { view: 'dashboard', label: 'Dashboard', icon: '⌂' },
+      { view: 'income', label: 'Income', icon: '↗' },
+      { view: 'expense', label: 'Expenses', icon: '↘' },
+      { view: 'approvals', label: 'Approvals', icon: '✓' },
+      { view: 'transactions', label: 'Transactions', icon: '⇄' },
+    ] },
+    { label: 'SALES', items: [
+      { view: 'shops', label: 'Shops', icon: '▣' },
+      { view: 'sales', label: 'Sales & Invoices', icon: '▤' },
+    ] },
+    { label: 'STOCK', items: [
+      { view: 'products', label: 'Products', icon: '◇' },
+      { view: 'inventory', label: 'Inventory', icon: '◫' },
+    ] },
+    { label: 'TEAM', items: [
+      { view: 'employees', label: 'Employees', icon: '♙' },
+      { view: 'attendance', label: 'Attendance', icon: '◷' },
+      { view: 'payroll', label: 'Payroll', icon: '$' },
+    ] },
+    { items: [
+      { view: 'reports', label: 'Reports', icon: '⌁' },
+      { view: 'messages', label: 'Messages', icon: '◌' },
+    ] },
+  ]
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
+    <div className={`app-shell ${desktopAdmin ? 'web-admin-shell' : ''}`}>
+      <header className={`topbar ${desktopAdmin ? 'admin-desktop-topbar' : ''}`}>
         <div className="topbar-brand">
           <img src={appIconUrl} alt="" />
           <div>
@@ -4226,17 +4257,62 @@ if (pendingView === 'messages' || pendingThread) {
             <span>{isAdmin ? 'Administrator' : 'Team Member'}</span>
           </div>
         </div>
-        <div className="topbar-actions">
-          <label className="language-select">
-            <span>Language</span>
-            <select value={language} onChange={(event) => changeLanguage(event.target.value as AppLanguage)}>
-              <option value="en">English</option>
-              <option value="si">සිංහල</option>
-            </select>
-          </label>
-          <button className="outline-button" onClick={logout}>Sign out</button>
-        </div>
+        {desktopAdmin ? (
+          <div className="admin-topbar-actions">
+            <button className="admin-last-updated" onClick={() => void loadData()} title="Refresh dashboard data">
+              <span>↻</span>
+              <small>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Refresh data'}</small>
+            </button>
+            <button className="admin-message-button" onClick={() => setActiveView('messages')} aria-label="Open messages">
+              ◌{unreadMessages > 0 && <em>{unreadMessages}</em>}
+            </button>
+            <label className="language-select admin-language-select">
+              <span>Language</span>
+              <select value={language} onChange={(event) => changeLanguage(event.target.value as AppLanguage)}>
+                <option value="en">English</option>
+                <option value="si">සිංහල</option>
+              </select>
+            </label>
+            <div className="admin-account-chip">
+              <span className="admin-avatar">{initials}</span>
+              <span><strong>{displayName}</strong><small>Administrator</small></span>
+            </div>
+            <button className="outline-button" onClick={logout}>Sign out</button>
+          </div>
+        ) : (
+          <div className="topbar-actions">
+            <label className="language-select">
+              <span>Language</span>
+              <select value={language} onChange={(event) => changeLanguage(event.target.value as AppLanguage)}>
+                <option value="en">English</option>
+                <option value="si">සිංහල</option>
+              </select>
+            </label>
+            <button className="outline-button" onClick={logout}>Sign out</button>
+          </div>
+        )}
       </header>
+
+      {desktopAdmin && (
+        <aside className="admin-sidebar" aria-label="Administrator navigation">
+          <div className="admin-sidebar-scroll">
+            {adminNavSections.map((section, sectionIndex) => (
+              <div className="admin-nav-section" key={`${section.label || 'main'}-${sectionIndex}`}>
+                {section.label && <span className="admin-nav-label">{section.label}</span>}
+                {section.items.map((item) => (
+                  <button key={item.view} className={activeView === item.view ? 'active' : ''} onClick={() => setActiveView(item.view)}>
+                    <span className="admin-nav-icon">{item.icon}</span>
+                    <span className="admin-nav-copy">{item.label}</span>
+                    {item.view === 'approvals' && totals.pendingCount > 0 && <em>{totals.pendingCount}</em>}
+                    {item.view === 'messages' && unreadMessages > 0 && <em>{unreadMessages}</em>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="admin-sidebar-footer">Secure business control centre</div>
+        </aside>
+      )}
 
       <nav className={`app-nav ${isAdmin ? '' : 'employee-main-nav'}`} aria-label="Main navigation">
         {navItems.map((item) => (
@@ -4252,42 +4328,59 @@ if (pendingView === 'messages' || pendingThread) {
         ))}
       </nav>
 
-      <main className="dashboard">
+      <main className={`dashboard ${desktopAdmin ? 'admin-desktop-main' : ''}`}>
         {dataError && <div className="global-error">{dataError}</div>}
 
         {activeView === 'dashboard' && (
           isAdmin ? (
-            <>
-              <section className="welcome-panel">
-                <p className="eyebrow">ADMIN CONTROL CENTRE</p>
-                <h1>Hello, {displayName}</h1>
-                {profile.email && <p className="welcome-email">{profile.email}</p>}
-                <p>Income, approved expenses and business profit are connected to your secure Supabase database.</p>
-              </section>
+            desktopAdmin ? (
+              <AdminDashboard
+                displayName={displayName}
+                email={profile.email}
+                income={income}
+                expenses={expenses}
+                payrolls={payrolls}
+                products={products}
+                shops={shops}
+                profiles={profiles}
+                loadingData={loadingData}
+                refreshToken={lastUpdated?.getTime() || 0}
+                onOpen={setActiveView}
+                onRefresh={() => void loadData()}
+              />
+            ) : (
+              <>
+                <section className="welcome-panel">
+                  <p className="eyebrow">ADMIN CONTROL CENTRE</p>
+                  <h1>Hello, {displayName}</h1>
+                  {profile.email && <p className="welcome-email">{profile.email}</p>}
+                  <p>Income, approved expenses and business profit are connected to your secure Supabase database.</p>
+                </section>
 
-              <section className="finance-grid">
-                <article className="finance-card income-card">
-                  <span>Total income</span>
-                  <strong>{formatLKR(totals.totalIncome)}</strong>
-                  <small>Confirmed payments converted to LKR</small>
-                </article>
-                <article className="finance-card expense-card">
-                  <span>Approved expenses</span>
-                  <strong>{formatLKR(totals.approvedExpenses)}</strong>
-                  <small>Only approved expenses affect cash profit</small>
-                </article>
-                <article className={`finance-card net-card ${totals.net < 0 ? 'loss' : 'gain'}`}>
-                  <span>Cash profit / loss</span>
-                  <strong>{totals.net >= 0 ? '+' : '−'}{formatLKR(Math.abs(totals.net))}</strong>
-                  <small>{totals.net >= 0 ? 'Current profit' : 'Current loss'}</small>
-                </article>
-                <article className="finance-card pending-card">
-                  <span>Pending approval</span>
-                  <strong>{totals.pendingCount}</strong>
-                  <small>{formatLKR(totals.pendingValue)} waiting</small>
-                </article>
-              </section>
-            </>
+                <section className="finance-grid">
+                  <article className="finance-card income-card">
+                    <span>Total income</span>
+                    <strong>{formatLKR(totals.totalIncome)}</strong>
+                    <small>Confirmed payments converted to LKR</small>
+                  </article>
+                  <article className="finance-card expense-card">
+                    <span>Approved expenses</span>
+                    <strong>{formatLKR(totals.approvedExpenses)}</strong>
+                    <small>Only approved expenses affect cash profit</small>
+                  </article>
+                  <article className={`finance-card net-card ${totals.net < 0 ? 'loss' : 'gain'}`}>
+                    <span>Cash profit / loss</span>
+                    <strong>{totals.net >= 0 ? '+' : '−'}{formatLKR(Math.abs(totals.net))}</strong>
+                    <small>{totals.net >= 0 ? 'Current profit' : 'Current loss'}</small>
+                  </article>
+                  <article className="finance-card pending-card">
+                    <span>Pending approval</span>
+                    <strong>{totals.pendingCount}</strong>
+                    <small>{formatLKR(totals.pendingValue)} waiting</small>
+                  </article>
+                </section>
+              </>
+            )
           ) : (
             loadingData ? (
               <div className="content-card empty-state">Loading your workspace…</div>
