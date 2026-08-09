@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { downloadRemoteFile } from './androidBridge'
 import {
   createDeliveryNotePdfBlob,
   createInvoicePdfBlob,
@@ -208,13 +209,7 @@ async function downloadPrivateDocument(path: string, fileName: string) {
     .createSignedUrl(path, 120, { download: fileName })
 
   if (error) throw error
-  const link = document.createElement('a')
-  link.href = data.signedUrl
-  link.download = fileName
-  link.rel = 'noopener'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
+  downloadRemoteFile(data.signedUrl, fileName, 'application/pdf')
 }
 
 export function SalesManager({ profile, shops, products, onChanged }: SalesManagerProps) {

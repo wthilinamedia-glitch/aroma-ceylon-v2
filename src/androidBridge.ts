@@ -12,6 +12,7 @@ type NativeAndroidBridge = {
   peekPendingUpload?: () => string
   readPendingUploadChunk?: (offset: number, length: number) => string
   clearPendingUpload?: () => void
+  downloadUrl?: (url: string, fileName: string, mimeType: string) => void
 }
 
 type PushTokenDetail = {
@@ -190,4 +191,23 @@ export function clearAndroidPendingUpload() {
   } catch (error) {
     console.warn('Unable to clear Android pending upload:', error)
   }
+}
+
+export function downloadRemoteFile(url: string, fileName: string, mimeType = 'application/pdf') {
+  if (isAndroidApp() && window.AromaAndroid?.downloadUrl) {
+    try {
+      window.AromaAndroid.downloadUrl(url, fileName, mimeType)
+      return
+    } catch (error) {
+      console.warn('Android native download failed; falling back to browser download:', error)
+    }
+  }
+
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }

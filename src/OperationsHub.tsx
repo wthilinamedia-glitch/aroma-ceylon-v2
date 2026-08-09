@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { downloadRemoteFile } from './androidBridge'
 import type { AppLanguage } from './i18n'
 import { t } from './i18n'
 import { createCreditNotePdfBlob, createInvoicePdfBlob } from './lib/salesPdf'
@@ -555,15 +556,7 @@ export function OperationsHub({
   async function download(path: string, name: string) {
     const { data, error: signedError } = await supabase.storage.from('sales-documents').createSignedUrl(path, 120, { download: name })
     if (signedError) setError(signedError.message)
-    else {
-      const anchor = document.createElement('a')
-      anchor.href = data.signedUrl
-      anchor.download = name
-      anchor.rel = 'noopener'
-      document.body.appendChild(anchor)
-      anchor.click()
-      anchor.remove()
-    }
+    else downloadRemoteFile(data.signedUrl, name, 'application/pdf')
   }
 
   if (mode === 'inventory') {

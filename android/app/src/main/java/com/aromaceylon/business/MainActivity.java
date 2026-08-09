@@ -476,37 +476,59 @@ private String pendingPayrollId;
         return true;
     }
 
+    private void enqueueDownload(String url, String requestedFileName, String mimeType, String userAgent) {
+        if (url == null || url.trim().isEmpty()) {
+            Toast.makeText(this, "Download link is unavailable.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (url.startsWith("blob:")) {
+            Toast.makeText(this,
+                    "This file cannot be downloaded directly from the Android WebView.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        try {
+            String resolvedMimeType = (mimeType == null || mimeType.trim().isEmpty())
+                    ? "application/octet-stream"
+                    : mimeType.trim();
+            String fileName = requestedFileName;
+            if (fileName == null || fileName.trim().isEmpty()) {
+                fileName = URLUtil.guessFileName(url, null, resolvedMimeType);
+            }
+            fileName = fileName.replaceAll("[\\/:*?\"<>|]", "_");
+
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setMimeType(resolvedMimeType);
+            if (userAgent != null && !userAgent.trim().isEmpty()) {
+                request.addRequestHeader("User-Agent", userAgent);
+            }
+
+            String cookies = CookieManager.getInstance().getCookie(url);
+            if (cookies != null && !cookies.isEmpty()) request.addRequestHeader("Cookie", cookies);
+
+            request.setTitle(fileName);
+            request.setDescription("Downloading from Aroma Ceylon");
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(true);
+            request.setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            );
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+
+            DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            manager.enqueue(request);
+            Toast.makeText(this, "Download started.", Toast.LENGTH_SHORT).show();
+        } catch (Exception error) {
+            Toast.makeText(this, "Download could not be started.", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private DownloadListener createDownloadListener() {
         return (url, userAgent, contentDisposition, mimeType, contentLength) -> {
-            if (url != null && url.startsWith("blob:")) {
-                Toast.makeText(this,
-                        "This PDF opens inside the app. Use the PDF viewer's save option.",
-                        Toast.LENGTH_LONG).show();
-                return;
-            }
-
-            try {
-                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-                request.setMimeType(mimeType);
-                request.addRequestHeader("User-Agent", userAgent);
-
-                String cookies = CookieManager.getInstance().getCookie(url);
-                if (cookies != null) request.addRequestHeader("Cookie", cookies);
-
-                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                request.setTitle(fileName);
-                request.setDescription("Downloading from Aroma Ceylon");
-                request.setNotificationVisibility(
-                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                );
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-
-                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-                manager.enqueue(request);
-                Toast.makeText(this, "Download started.", Toast.LENGTH_SHORT).show();
-            } catch (Exception error) {
-                Toast.makeText(this, "Download could not be started.", Toast.LENGTH_LONG).show();
-            }
+            String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+            enqueueDownload(url, fileName, mimeType, userAgent);
         };
     }
 
@@ -626,6 +648,16 @@ public String consumePendingPayrollId() {
         @JavascriptInterface
         public void openNotificationSettings() {
             runOnUiThread(MainActivity.this::openNotificationSettings);
+        }
+
+        @JavascriptInterface
+        public void downloadUrl(String url, String fileName, String mimeType) {
+            runOnUiThread(() -> enqueueDownload(
+                    url,
+                    fileName,
+                    mimeType,
+                    webView == null ? null : webView.getSettings().getUserAgentString()
+            ));
         }
     }
 }

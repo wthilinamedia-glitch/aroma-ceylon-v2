@@ -18,6 +18,7 @@ import {
   consumeAndroidPendingUpload,
   consumeAndroidPendingView,
   disableCurrentAndroidPushDevice,
+  downloadRemoteFile,
   isAndroidApp,
   openAndroidNotificationSettings,
   useAndroidPushRegistration,
@@ -595,13 +596,7 @@ async function downloadPrivatePayslip(payroll: PayrollRecord, employeeName: stri
     .createSignedUrl(payroll.payslip_path, 120, { download: fileName })
 
   if (error) throw error
-  const link = document.createElement('a')
-  link.href = data.signedUrl
-  link.download = fileName
-  link.rel = 'noopener'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
+  downloadRemoteFile(data.signedUrl, fileName, 'application/pdf')
 }
 
 function datesForMonth(month: string) {
