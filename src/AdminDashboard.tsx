@@ -189,12 +189,12 @@ function CurrencySummary({ values, empty = 'No data' }: { values: Record<string,
   )
 }
 
-function TrendChart({ income, expenses }: { income: IncomeLike[]; expenses: ExpenseLike[] }) {
+function TrendChart({ income, expenses, daysCount }: { income: IncomeLike[]; expenses: ExpenseLike[]; daysCount: 7 | 30 }) {
   const data = useMemo(() => {
-    const days = Array.from({ length: 30 }, (_, index) => {
+    const days = Array.from({ length: daysCount }, (_, index) => {
       const date = new Date()
       date.setHours(12, 0, 0, 0)
-      date.setDate(date.getDate() - (29 - index))
+      date.setDate(date.getDate() - ((daysCount - 1) - index))
       const key = localDateKey(date)
       return { key, label: `${date.getDate()} ${date.toLocaleString('en-GB', { month: 'short' })}`, received: 0, spent: 0 }
     })
@@ -208,7 +208,7 @@ function TrendChart({ income, expenses }: { income: IncomeLike[]; expenses: Expe
       if (day) day.spent += Number(row.amount_lkr || 0)
     })
     return days
-  }, [income, expenses])
+  }, [income, expenses, daysCount])
 
   const width = 760
   const height = 255
@@ -232,7 +232,7 @@ function TrendChart({ income, expenses }: { income: IncomeLike[]; expenses: Expe
         <span><i className="chart-dot received" />Cash received</span>
         <span><i className="chart-dot spent" />Approved expenses</span>
       </div>
-      <svg className="admin-trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Last 30 days cash received and approved expenses in LKR">
+      <svg className="admin-trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Last ${daysCount} days cash received and approved expenses in LKR`}>
         {gridValues.map((value) => (
           <g key={value}>
             <line x1={left} x2={width - right} y1={y(value)} y2={y(value)} className="chart-grid-line" />
@@ -243,7 +243,17 @@ function TrendChart({ income, expenses }: { income: IncomeLike[]; expenses: Expe
         ))}
         <polyline points={receivedPoints} className="chart-line received" />
         <polyline points={spentPoints} className="chart-line spent" />
-        {data.map((row, index) => index % 6 === 0 || index === data.length - 1 ? (
+        {data.map((row, index) => (
+          <g key={`point-${row.key}`}>
+            {(row.received > 0 || row.spent > 0) && (
+              <>
+                {row.received > 0 && <circle cx={x(index)} cy={y(row.received)} r="4.5" className="chart-point received"><title>{`${row.label} · Cash received ${formatLKR(row.received)}`}</title></circle>}
+                {row.spent > 0 && <circle cx={x(index)} cy={y(row.spent)} r="4.5" className="chart-point spent"><title>{`${row.label} · Approved expenses ${formatLKR(row.spent)}`}</title></circle>}
+              </>
+            )}
+          </g>
+        ))}
+        {data.map((row, index) => index % (daysCount === 7 ? 1 : 6) === 0 || index === data.length - 1 ? (
           <text key={row.key} x={x(index)} y={height - 10} textAnchor={index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'} className="chart-x-label">{row.label}</text>
         ) : null)}
       </svg>
@@ -269,6 +279,14 @@ export function AdminDashboard({
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
   const [dashboardError, setDashboardError] = useState('')
   const [dashboardLoading, setDashboardLoading] = useState(true)
+  const [trendDays, setTrendDays] = useState<7 | 30>(30)
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -465,10 +483,14 @@ export function AdminDashboard({
   const expenseComparison = comparison(expenseThisMonth, expenseLastMonth, true)
   const profitComparison = comparison(cashProfit, lastCashProfit)
   const activeShopsWithOutstanding = outstandingRows.length
-  const salaryDueCount = payrolls.filter((row) => row.status === 'finalized').length
+  const finalizedPayrolls = payrolls.filter((row) => row.status === 'finalized')
+  const salaryDueCount = finalizedPayrolls.length
+  const invoiceCurrencies: string[] = Array.from(new Set<string>(validInvoices.map((row) => String(row.currency || 'LKR'))))
+  const salesEmptyLabel = invoiceCurrencies.length === 1 ? money(0, invoiceCurrencies[0]) : '0.00'
+  const outstandingEmptyLabel = invoiceCurrencies.length === 1 ? money(0, invoiceCurrencies[0]) : '0.00'
   const activeProducts = products.filter((row) => row.active)
   const productsWithCost = activeProducts.filter((row) => Number(row.cost_price || 0) > 0)
-  const activeInventoryCurrencies = Array.from(new Set(activeProducts.map((row) => row.currency).filter(Boolean)))
+  const activeInventoryCurrencies: string[] = Array.from(new Set<string>(activeProducts.map((row) => String(row.currency || 'LKR'))))
   const inventoryEmptyLabel = activeProducts.length === 0
     ? 'No active items'
     : activeInventoryCurrencies.length === 1
@@ -525,17 +547,26 @@ export function AdminDashboard({
       </section>
 
       <section className="admin-secondary-kpis">
-        <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▤</span><span><small>Net Sales (This Month)</small><CurrencySummary values={monthlySalesByCurrency} /></span></button>
-        <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▣</span><span><small>Outstanding from Shops</small><CurrencySummary values={outstandingByCurrency} /><em>{activeShopsWithOutstanding} shop{activeShopsWithOutstanding === 1 ? '' : 's'}</em></span></button>
+        <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▤</span><span><small>Net Sales (This Month)</small><CurrencySummary values={monthlySalesByCurrency} empty={salesEmptyLabel} /><em>{Object.keys(monthlySalesByCurrency).length > 0 ? 'Finalized sales this month' : 'No finalized sales this month'}</em></span></button>
+        <button className="admin-mini-kpi" onClick={() => onOpen('sales')}><span className="mini-icon blue">▣</span><span><small>Outstanding from Shops</small><CurrencySummary values={outstandingByCurrency} empty={outstandingEmptyLabel} /><em>{activeShopsWithOutstanding > 0 ? `${activeShopsWithOutstanding} shop${activeShopsWithOutstanding === 1 ? '' : 's'} with balance` : 'All customer balances clear'}</em></span></button>
         <button className="admin-mini-kpi" onClick={() => onOpen('inventory')}><span className="mini-icon green">◇</span><span><small>Inventory Cost Value</small><CurrencySummary values={inventoryValueByCurrency} empty={inventoryEmptyLabel} /><em>{activeProducts.length === 0 ? 'No active products' : productsWithCost.length === 0 ? 'Cost price not set' : `${activeProducts.length} active item${activeProducts.length === 1 ? '' : 's'}`}</em></span></button>
         <button className="admin-mini-kpi alert" onClick={() => onOpen('inventory')}><span className="mini-icon red">!</span><span><small>Low Stock Items</small><strong>{lowStock.length}</strong><em>{lowStock.length > 0 ? 'Requires attention' : 'Stock levels healthy'}</em></span></button>
-        <button className="admin-mini-kpi" onClick={() => onOpen('payroll')}><span className="mini-icon neutral">♙</span><span><small>Salary Due</small><CurrencySummary values={salaryDueByCurrency} empty="None due" /><em>{salaryDueCount > 0 ? `${salaryDueCount} finalized payroll${salaryDueCount === 1 ? '' : 's'}` : 'No unpaid payroll'}</em></span></button>
+        <button className={`admin-mini-kpi salary-due ${salaryDueCount > 0 ? 'has-due' : 'settled'}`} onClick={() => onOpen('payroll')}><span className="mini-icon neutral">♙</span><span><small>Salary Due</small><CurrencySummary values={salaryDueByCurrency} empty="LKR 0.00" /><em>{salaryDueCount > 0 ? `${salaryDueCount} payroll${salaryDueCount === 1 ? '' : 's'} awaiting payment` : 'All payrolls settled'}</em>{salaryDueCount > 0 ? <b className="salary-state">Payment due</b> : <b className="salary-state settled">Up to date</b>}</span></button>
       </section>
 
       <section className="admin-dashboard-grid">
         <article className="admin-dashboard-card trend-card">
-          <header><div><h2>Cash Flow Trend</h2><p>Last 30 days · LKR</p></div><button onClick={() => onOpen('reports')}>Reports ↗</button></header>
-          <TrendChart income={income} expenses={expenses} />
+          <header className="trend-card-header">
+            <div><h2>Cash Flow Trend</h2><p>Last {trendDays} days · LKR · hover data points for details</p></div>
+            <div className="trend-card-actions">
+              <div className="trend-period-toggle" aria-label="Cash flow period">
+                <button className={trendDays === 7 ? 'active' : ''} onClick={() => setTrendDays(7)}>7D</button>
+                <button className={trendDays === 30 ? 'active' : ''} onClick={() => setTrendDays(30)}>30D</button>
+              </div>
+              <button className="trend-report-link" onClick={() => onOpen('reports')}>Reports ↗</button>
+            </div>
+          </header>
+          <TrendChart income={income} expenses={expenses} daysCount={trendDays} />
         </article>
 
         <article className="admin-dashboard-card outstanding-card">
