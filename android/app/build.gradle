@@ -21,8 +21,8 @@ android {
         applicationId 'com.aromaceylon.business'
         minSdk 26
         targetSdk 35
-        versionCode 6
-        versionName "1.2.3-test"
+        versionCode 7
+        versionName '1.2.4-test'
     }
 
     signingConfigs {
@@ -61,7 +61,7 @@ android {
     }
 }
 
-// A GitHub release build must never silently fall back to an unsigned APK.
+// Never allow a GitHub release build to silently fall back to unsigned output.
 gradle.taskGraph.whenReady { graph ->
     if (graph.hasTask(':app:assembleRelease') && !hasReleaseSigning) {
         throw new GradleException('Release signing secrets are missing. Refusing to build an unsigned Aroma Ceylon release APK.')
