@@ -3976,11 +3976,17 @@ function Dashboard({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!androidApp) return
 
-    const pendingThread = consumeAndroidPendingThreadId()
-    if (pendingThread) {
-      setPushThreadId(pendingThread)
-      setActiveView('messages')
-    }
+    const pendingView = consumeAndroidPendingView()
+const pendingThread = consumeAndroidPendingThreadId()
+const pendingPayrollId = consumeAndroidPendingPayrollId()
+
+if (pendingView === 'messages' || pendingThread) {
+  setPushThreadId(pendingThread || null)
+  setActiveView('messages')
+} else if (pendingView === 'payslips' || pendingPayrollId) {
+  setPushThreadId(null)
+  setActiveView('payslips')
+}
 
     function openPush(
   event: CustomEvent<{
