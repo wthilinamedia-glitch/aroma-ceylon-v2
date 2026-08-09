@@ -424,6 +424,19 @@ private String pendingPayrollId;
         }
 
         @JavascriptInterface
+public String consumePendingView() {
+    String current = pendingView == null ? "" : pendingView;
+    pendingView = null;
+    return current;
+}
+
+@JavascriptInterface
+public String consumePendingPayrollId() {
+    String current = pendingPayrollId == null ? "" : pendingPayrollId;
+    pendingPayrollId = null;
+    return current;
+}
+        @JavascriptInterface
         public String getAppVersion() {
             try {
                 return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
