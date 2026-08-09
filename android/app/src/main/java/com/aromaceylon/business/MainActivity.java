@@ -239,10 +239,6 @@ private String pendingPayrollId;
     String threadId = intent.getStringExtra("thread_id");
     String payrollId = intent.getStringExtra("payroll_id");
 
-    pendingView = view == null ? null : view.trim();
-    pendingThreadId = threadId == null ? null : threadId.trim();
-    pendingPayrollId = payrollId == null ? null : payrollId.trim();
-
     if ((pendingView != null && !pendingView.isEmpty())
             || (pendingThreadId != null && !pendingThreadId.isEmpty())
             || (pendingPayrollId != null && !pendingPayrollId.isEmpty())) {
